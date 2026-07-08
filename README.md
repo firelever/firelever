@@ -43,6 +43,14 @@ holds golden queries; `npm run eval` reports recall@5 and MRR for keyword-only,
 vector-only, and hybrid, records history, and fails on regression. Current: hybrid
 86.4% recall@5 / 0.714 MRR vs the keyword baseline.
 
+Grounded Q&A (slice 3) sits on top: `npm run ask -- --tenant firelever "question"`
+answers with a citation after every claim and refuses when the corpus lacks the answer
+([ADR-003](docs/adr/ADR-003-grounded-answering.md)). `npm run eval:qa` grades a
+24-question golden set (16 answerable, 8 unanswerable) with an LLM judge plus
+programmatic citation checks. Current (2026-07-08): refusal 100%, faithfulness 100%,
+citation accuracy 100%, correctness 93.3%; 1 of 16 wrongly refused, traced to a known
+retrieval miss on the PRD latency table, not an answering bug.
+
 ## MCP server
 
 `npm run mcp` starts a read-only [MCP](https://modelcontextprotocol.io) server over
