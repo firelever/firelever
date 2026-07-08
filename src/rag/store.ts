@@ -7,8 +7,11 @@ import * as sqliteVec from "sqlite-vec";
 import path from "path";
 import { fileURLToPath } from "url";
 
+// Default to the repo root locally; KB_DB_PATH points at the mounted volume in
+// production (see fly.toml).
 const here = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(here, "..", "..", "kb.db"));
+const dbPath = process.env.KB_DB_PATH ?? path.join(here, "..", "..", "kb.db");
+const db = new Database(dbPath);
 db.pragma("journal_mode = WAL");
 sqliteVec.load(db);
 

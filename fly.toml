@@ -1,0 +1,27 @@
+# Fly.io deploy for the FireLever Copilot server (slice 5b).
+# One machine, one volume — matches the single-writer SQLite model in ADR-005.
+app = "firelever-copilot"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # kb.db and the leads pipeline DBs live on the mounted volume, not the image.
+  KB_DB_PATH = "/data/kb.db"
+
+[[mounts]]
+  source = "flv_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
