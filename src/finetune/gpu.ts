@@ -77,7 +77,10 @@ async function launch() {
               name: "firelever-triage-lora",
               imageName: IMAGE,
               dockerArgs: START_CMD,
-              containerDiskInGb: 50,
+              // 100GB: HF cache (~15GB) + merged 16-bit (~15GB) + f16 GGUF
+              // intermediate (~15GB) + q4 output (~5GB) + image and headroom.
+              // 50GB died at the GGUF write step.
+              containerDiskInGb: 100,
               volumeInGb: 0,
               minVcpuCount: 2,
               minMemoryInGb: 8,
