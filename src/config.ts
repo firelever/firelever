@@ -1,3 +1,16 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Load .env before anything below reads process.env. Values already present in
+// the environment win; loadEnvFile does not overwrite them.
+try {
+  process.loadEnvFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".env")
+  );
+} catch {
+  // no .env — fall back to whatever the shell provides
+}
+
 // Ideal Customer Profile and pipeline settings.
 // Confirmed 2026-07-04: start broad across ops-heavy industries, narrow once
 // score/reply data shows which segments convert.

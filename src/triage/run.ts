@@ -53,6 +53,7 @@ async function fetchImapUnseen(): Promise<RawEmail[]> {
     throw new Error("IMAP mode needs GMAIL_USER and GMAIL_APP_PASSWORD in .env (see README)");
   }
   const { ImapFlow } = await import("imapflow");
+  const { simpleParser } = await import("mailparser");
   const client = new ImapFlow({
     host: "imap.gmail.com",
     port: 993,
@@ -66,23 +67,20 @@ async function fetchImapUnseen(): Promise<RawEmail[]> {
   try {
     const uids = await client.search({ seen: false });
     for (const uid of uids || []) {
-      const msg = await client.fetchOne(String(uid), { envelope: true, source: true });
-      if (!msg) continue;
-      const source = msg.source?.toString() ?? "";
-      // Plain-text extraction, good enough for triage: strip headers, prefer the
-      // text/plain part when the message is multipart.
-      const headerEnd = source.indexOf("\r\n\r\n");
-      let body = headerEnd === -1 ? source : source.slice(headerEnd + 4);
-      const plainMatch = body.match(
-        /Content-Type: text\/plain[\s\S]*?\r\n\r\n([\s\S]*?)(?:\r\n--|$)/i
-      );
-      if (plainMatch) body = plainMatch[1];
+      const msg = await client.fetchOne(String(uid), { source: true });
+      if (!msg || !msg.source) continue;
+      // Real MIME parsing: handles multipart, base64/quoted-printable transfer
+      // encodings, and HTML-only messages.
+      const parsed = await simpleParser(msg.source);
+      const body =
+        parsed.text?.trim() ||
+        (parsed.html ? parsed.html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
       out.push({
-        message_id: msg.envelope?.messageId ?? `imap:${uid}`,
-        from_addr: msg.envelope?.from?.[0]?.address ?? "unknown@unknown",
-        subject: msg.envelope?.subject ?? "(no subject)",
-        body: body.trim().slice(0, 8000),
-        received_at: msg.envelope?.date?.toISOString() ?? null,
+        message_id: parsed.messageId ?? `imap:${uid}`,
+        from_addr: parsed.from?.value?.[0]?.address ?? "unknown@unknown",
+        subject: parsed.subject ?? "(no subject)",
+        body: body.slice(0, 8000),
+        received_at: parsed.date?.toISOString() ?? null,
       });
     }
   } finally {
@@ -124,28 +122,35 @@ async function main() {
       skipped++; // already seen this message_id
       continue;
     }
-    const c = await classifyEmail(e.from_addr, e.subject, e.body);
-    updateEmail(id, {
-      category: c.category,
-      needs_reply: c.needs_reply ? 1 : 0,
-      urgency: c.urgency,
-      triage_reasoning: c.reasoning,
-      status: "triaged",
-    });
-    console.log(`  ${c.category.padEnd(15)} ${c.urgency.padEnd(6)} reply=${c.needs_reply}  ${e.subject}`);
-
-    if (c.needs_reply && c.category !== "newsletter_spam") {
-      const d = await draftReply(tenantId, e.from_addr, e.subject, e.body, c);
+    // One bad email must not kill the run: mark it and move on. 'error' rows
+    // stay visible in the DB for diagnosis and manual retry.
+    try {
+      const c = await classifyEmail(e.from_addr, e.subject, e.body);
       updateEmail(id, {
-        draft_reply: d.reply,
-        draft_sources_json: JSON.stringify(
-          d.used_sources.map((n) => d.sources[n - 1]?.document_path).filter(Boolean)
-        ),
-        draft_confident: d.confident ? 1 : 0,
-        status: "drafted",
+        category: c.category,
+        needs_reply: c.needs_reply ? 1 : 0,
+        urgency: c.urgency,
+        triage_reasoning: c.reasoning,
+        status: "triaged",
       });
+      console.log(`  ${c.category.padEnd(15)} ${c.urgency.padEnd(6)} reply=${c.needs_reply}  ${e.subject}`);
+
+      if (c.needs_reply && c.category !== "newsletter_spam") {
+        const d = await draftReply(tenantId, e.from_addr, e.subject, e.body, c);
+        updateEmail(id, {
+          draft_reply: d.reply,
+          draft_sources_json: JSON.stringify(
+            d.used_sources.map((n) => d.sources[n - 1]?.document_path).filter(Boolean)
+          ),
+          draft_confident: d.confident ? 1 : 0,
+          status: "drafted",
+        });
+      }
+      processed++;
+    } catch (err) {
+      updateEmail(id, { status: "error" });
+      console.error(`  ERROR          ${e.subject}: ${err instanceof Error ? err.message : err}`);
     }
-    processed++;
   }
   console.log(`\nDone. processed=${processed} already_seen=${skipped}. Next: npm run triage:review`);
 }

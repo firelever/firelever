@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS inbound_emails (
   draft_sources_json TEXT,         -- chunk ids the draft relied on (reviewer-facing)
   draft_confident INTEGER,         -- 0/1: drafter's own confidence flag
   status TEXT NOT NULL DEFAULT 'new',
-    -- new -> triaged -> drafted -> approved | rejected | ignored
+    -- new -> triaged -> drafted -> approved | rejected | ignored; error = triage failed, retry manually
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(tenant_id, message_id)

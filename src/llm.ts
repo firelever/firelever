@@ -1,18 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import path from "path";
-import { fileURLToPath } from "url";
+// config.js loads .env as a side effect before the SDK reads credentials.
 import { MODEL } from "./config.js";
-
-if (!process.env.ANTHROPIC_API_KEY) {
-  const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
-  try {
-    process.loadEnvFile(envFile);
-  } catch {
-    // no .env — the SDK falls back to its normal credential resolution
-  }
-}
 
 export const client = new Anthropic();
 
@@ -109,7 +99,9 @@ export async function extract<T extends z.ZodType>(
     )
   );
   if (response.parsed_output == null) {
-    throw new Error(`extract(${name}): model output did not match schema`);
+    throw new Error(
+      `extract(${name}): model output did not match schema (stop_reason=${response.stop_reason})`
+    );
   }
   return response.parsed_output;
 }
