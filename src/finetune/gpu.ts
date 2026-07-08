@@ -19,7 +19,15 @@ const STATE = path.join(process.cwd(), "finetune", ".pod.json");
 
 const REPO = "https://github.com/firelever/firelever";
 const IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04";
-const GPU = "NVIDIA GeForce RTX 4090";
+// Fallback ladder: any 24GB+ card works for a 7B QLoRA. Community cloud first.
+const GPU_LADDER = [
+  "NVIDIA GeForce RTX 4090",
+  "NVIDIA RTX A5000",
+  "NVIDIA L4",
+  "NVIDIA RTX 4000 Ada Generation",
+  "NVIDIA A40",
+  "NVIDIA RTX A6000",
+];
 
 // Startup: everything logged into the served directory so progress is pollable
 // from outside. status.txt appears only when the whole pipeline finished.
@@ -57,31 +65,42 @@ function proxyUrl(id: string, file: string) {
 }
 
 async function launch() {
-  const data = await gql(
-    `mutation Deploy($input: PodFindAndDeployOnDemandInput) {
-       podFindAndDeployOnDemand(input: $input) { id imageName machineId costPerHr }
-     }`,
-    {
-      input: {
-        cloudType: "COMMUNITY",
-        gpuCount: 1,
-        gpuTypeId: GPU,
-        name: "firelever-triage-lora",
-        imageName: IMAGE,
-        dockerArgs: START_CMD,
-        containerDiskInGb: 80,
-        volumeInGb: 0,
-        minVcpuCount: 4,
-        minMemoryInGb: 16,
-        ports: "8000/http",
-        env: [],
-      },
+  for (const cloudType of ["COMMUNITY", "SECURE"]) {
+    for (const gpu of GPU_LADDER) {
+      try {
+        const data = await gql(
+          `mutation Deploy($input: PodFindAndDeployOnDemandInput) {
+             podFindAndDeployOnDemand(input: $input) { id imageName machineId costPerHr }
+           }`,
+          {
+            input: {
+              cloudType,
+              gpuCount: 1,
+              gpuTypeId: gpu,
+              name: "firelever-triage-lora",
+              imageName: IMAGE,
+              dockerArgs: START_CMD,
+              containerDiskInGb: 50,
+              volumeInGb: 0,
+              minVcpuCount: 2,
+              minMemoryInGb: 8,
+              ports: "8000/http",
+              env: [],
+            },
+          }
+        );
+        const pod = data.podFindAndDeployOnDemand;
+        if (!pod) continue;
+        fs.writeFileSync(STATE, JSON.stringify(pod, null, 2));
+        console.log(`Pod launched: ${pod.id} on ${gpu} (${cloudType}) at $${pod.costPerHr}/hr`);
+        console.log("Poll with: npm run gpu -- status");
+        return;
+      } catch (e) {
+        console.log(`  ${gpu} (${cloudType}): unavailable, trying next…`);
+      }
     }
-  );
-  const pod = data.podFindAndDeployOnDemand;
-  fs.writeFileSync(STATE, JSON.stringify(pod, null, 2));
-  console.log(`Pod launched: ${pod.id} on ${GPU} at $${pod.costPerHr}/hr`);
-  console.log("Poll with: npm run gpu -- status");
+  }
+  throw new Error("No GPU available on any tier right now — try again in a few minutes.");
 }
 
 async function status() {
