@@ -1,0 +1,44 @@
+{"query": "how many cold emails can we send per mailbox each day once warmed up", "doc": "PLAN.md", "must_contain": "50/day/mailbox"}
+{"query": "how long do new mailboxes need to warm up before sending", "doc": "PLAN.md", "must_contain": "2–3 week warmup"}
+{"query": "which tools handle mailbox warmup and sending", "doc": "PLAN.md", "must_contain": "Instantly.ai or Smartlead"}
+{"query": "what CRM should we start with for pipeline tracking", "doc": "PLAN.md", "must_contain": "Attio or HubSpot Free"}
+{"query": "what scheduling tool do we use for booking calls", "must_contain": "Cal.com"}
+{"query": "what does the follow-up tracker agent do when a prospect responds", "doc": "PLAN.md", "must_contain": "Watches replies"}
+{"query": "how many researched prospects per day is the swarm supposed to produce", "doc": "PLAN.md", "must_contain": "15–25 new qualified"}
+{"query": "what happens when someone engages with Peter's LinkedIn posts", "doc": "PLAN.md", "must_contain": "auto-enrich"}
+{"query": "how much social content does the content agent write each week", "doc": "PLAN.md", "must_contain": "3–4 LinkedIn posts"}
+{"query": "why is building our own growth system good marketing", "doc": "PLAN.md", "must_contain": "Dogfooding is the marketing"}
+{"query": "is it ok to send cold outreach from firelever.com", "doc": "PLAN.md", "must_contain": "primary domain"}
+{"query": "how many sales meetings do we want in the first month", "doc": "PLAN.md", "must_contain": "Discovery calls booked"}
+{"query": "what revenue range defines our target companies", "doc": "PLAN.md", "must_contain": "$5M–$500M"}
+{"query": "which directories should FireLever get listed in", "doc": "PLAN.md", "must_contain": "Clutch"}
+{"query": "how do I set up gmail credentials for the sender", "doc": "README.md", "must_contain": "App passwords"}
+{"query": "on which days do follow-up emails go out", "doc": "README.md", "must_contain": "day 0/3/7"}
+{"query": "what are the possible statuses of a lead in the pipeline", "doc": "README.md", "must_contain": "approved/rejected"}
+{"query": "how do I add a recipient's email address to a lead", "doc": "README.md", "must_contain": "manually sourced recipient email"}
+{"query": "what must every phase of our process produce", "doc": "PROCESS.md", "must_contain": "every phase produces a short written artifact"}
+{"query": "do API and MCP surfaces need wireframes", "doc": "PROCESS.md", "must_contain": "interface contract"}
+{"query": "what security checks happen during verification", "doc": "PROCESS.md", "must_contain": "tenant-isolation probes"}
+{"query": "which governance frameworks does our process map to", "must_contain": "NIST AI RMF"}
+{"query": "how long should an architecture decision record be", "doc": "PROCESS.md", "must_contain": "one page per significant choice"}
+{"query": "how much production traffic do we grade after launch", "doc": "PROCESS.md", "must_contain": "5% of real queries"}
+{"query": "why measure a dumb baseline before building the real thing", "doc": "PROCESS.md", "must_contain": "provable, not vibes"}
+{"query": "when do we need to make our first dollar of revenue", "doc": "01-BRD.md", "must_contain": "2026-10-31"}
+{"query": "what's our spending ceiling before we have customers", "doc": "01-BRD.md", "must_contain": "$100/mo"}
+{"query": "how much does the readiness audit cost", "must_contain": "$299"}
+{"query": "what should the system do when it can't back up an answer with a source", "doc": "01-BRD.md", "must_contain": "must refuse instead"}
+{"query": "what's our tolerance for data leaking between customers", "doc": "01-BRD.md", "must_contain": "zero tolerance"}
+{"query": "what's the biggest risk around finding pilot customers", "doc": "01-BRD.md", "must_contain": "recruit 3 design partners"}
+{"query": "how fast must answers start streaming back", "doc": "02-PRD.md", "must_contain": "< 5s p95"}
+{"query": "will the product ever send emails by itself", "must_contain": "autonomous sending"}
+{"query": "how much can each question cost us to answer", "must_contain": "$0.05"}
+{"query": "what's the last slice in the build order", "doc": "02-PRD.md", "must_contain": "Fine-tune + benchmark writeup"}
+{"query": "what writing style rules apply to drafted emails", "doc": "02-PRD.md", "must_contain": "no em dashes"}
+{"query": "how is tenant isolation enforced in storage", "doc": "02-PRD.md", "must_contain": "no cross-tenant query path"}
+{"query": "what has to happen before we ingest a customer's documents", "doc": "03-data-audit-and-eval-plan.md", "must_contain": "mini-audit"}
+{"query": "how do we test resistance to prompt injection attacks", "doc": "03-data-audit-and-eval-plan.md", "must_contain": "instructions embedded in content"}
+{"query": "what retrieval quality score are we aiming for", "must_contain": "0.85"}
+{"query": "what baseline must the retrieval system beat", "doc": "03-data-audit-and-eval-plan.md", "must_contain": "SQLite FTS"}
+{"query": "why can't agent-written JSON fields be trusted", "doc": "03-data-audit-and-eval-plan.md", "must_contain": "parse defensively"}
+{"query": "why did we reject a raw SQL tool on the MCP server", "doc": "ADR-001-mcp-server-over-leads-db.md", "must_contain": "blast radius"}
+{"query": "why did we pick stdio transport instead of HTTP", "doc": "ADR-001-mcp-server-over-leads-db.md", "must_contain": "no port"}

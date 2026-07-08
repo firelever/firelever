@@ -1,0 +1,5 @@
+{"at":"2026-07-08T02:00:01.426Z","provider":"local-bge-small-en-v1.5","queries":44,"k":5,"keyword_recall":0.7954545454545454,"vector_recall":0.7272727272727273,"hybrid_recall":0.7727272727272727,"hybrid_mrr":0.5965909090909091}
+{"at":"2026-07-08T02:01:05.920Z","provider":"local-bge-small-en-v1.5","queries":44,"k":5,"keyword_recall":0.7272727272727273,"vector_recall":0.7954545454545454,"hybrid_recall":0.7954545454545454,"hybrid_mrr":0.6522727272727272}
+{"at":"2026-07-08T02:03:07.031Z","provider":"local-bge-small-en-v1.5","queries":44,"k":5,"keyword_recall":0.75,"vector_recall":0.75,"hybrid_recall":0.7954545454545454,"hybrid_mrr":0.6484848484848484}
+{"at":"2026-07-08T02:03:34.875Z","provider":"local-bge-small-en-v1.5","queries":44,"k":5,"keyword_recall":0.7954545454545454,"vector_recall":0.7954545454545454,"hybrid_recall":0.8409090909090909,"hybrid_mrr":0.6939393939393939}
+{"at":"2026-07-08T02:04:50.679Z","provider":"local-bge-small-en-v1.5","queries":44,"k":5,"keyword_recall":0.7954545454545454,"vector_recall":0.7954545454545454,"hybrid_recall":0.8636363636363636,"hybrid_mrr":0.7136363636363636}
