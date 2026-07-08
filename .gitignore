@@ -7,5 +7,6 @@ kb.db-*
 .env
 # generated artifacts containing prospect data — never publish
 outbox.md
+qa-log.jsonl
 dashboard.html
 .claude/settings.local.json

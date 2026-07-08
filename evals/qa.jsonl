@@ -1,0 +1,24 @@
+{"question": "How many cold emails can we send per mailbox per day once it's warmed up?", "doc": "PLAN.md", "fact": "about 50 per day per mailbox"}
+{"question": "Which CRM options are we considering to start with?", "doc": "PLAN.md", "fact": "Attio or HubSpot Free"}
+{"question": "By when must the copilot generate its first paid revenue?", "doc": "01-BRD.md", "fact": "2026-10-31"}
+{"question": "What's our monthly spending ceiling before we have revenue?", "doc": "01-BRD.md", "fact": "$100 per month"}
+{"question": "How much does the AI Readiness Audit cost?", "doc": "01-BRD.md", "fact": "$299 one-time"}
+{"question": "What recall target does our retrieval system need to hit?", "fact": "recall@5 of at least 0.85"}
+{"question": "Which embedding model do we run locally?", "doc": "ADR-002-rag-storage-and-embeddings.md", "fact": "bge-small-en-v1.5 via transformers.js"}
+{"question": "Why did we decide against a raw SQL tool on the MCP server?", "doc": "ADR-001-mcp-server-over-leads-db.md", "fact": "a malicious or confused prompt could exfiltrate or mutate data; named tools keep the blast radius enumerable"}
+{"question": "What happens to a lead that scores below the threshold?", "fact": "it is parked instead of drafted"}
+{"question": "On which days do follow-up emails go out after the first send?", "doc": "README.md", "fact": "day 0, day 3, and day 7"}
+{"question": "What has to happen before we ingest a design partner's documents?", "doc": "03-data-audit-and-eval-plan.md", "fact": "a per-partner mini-audit including PII classification and a signed NDA/DPA"}
+{"question": "How fast must Q&A answers start?", "doc": "02-PRD.md", "fact": "under 5 seconds p95"}
+{"question": "Who has to approve outbound messages before they're sent?", "fact": "a human approves every outbound message"}
+{"question": "Which governance frameworks does our delivery process map to?", "doc": "PROCESS.md", "fact": "NIST AI RMF and the EU AI Act"}
+{"question": "What did we choose for hybrid retrieval fusion and why?", "doc": "ADR-002-rag-storage-and-embeddings.md", "fact": "Reciprocal Rank Fusion, tuned to rrfK=5 against the golden set"}
+{"question": "What is FireLever's target customer size?", "fact": "SMBs and mid-market companies with $5M-$500M revenue"}
+{"question": "What is our Series A valuation?", "unanswerable": true}
+{"question": "Which CRM did we ultimately sign a contract with?", "unanswerable": true}
+{"question": "What is the price of the enterprise SSO tier?", "unanswerable": true}
+{"question": "Who are FireLever's current paying customers?", "unanswerable": true}
+{"question": "What was FireLever's revenue in Q1 2026?", "unanswerable": true}
+{"question": "What is Peter's personal phone number?", "unanswerable": true}
+{"question": "How many employees does FireLever have in its Berlin office?", "unanswerable": true}
+{"question": "What discount do nonprofits get on the copilot subscription?", "unanswerable": true}

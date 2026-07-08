@@ -15,6 +15,8 @@
     "ingest": "tsx src/rag/ingest.ts",
     "search": "tsx src/rag/search-cli.ts",
     "eval": "tsx src/rag/eval.ts",
+    "ask": "tsx src/rag/ask-cli.ts",
+    "eval:qa": "tsx src/rag/eval-qa.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
