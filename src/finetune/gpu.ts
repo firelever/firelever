@@ -29,17 +29,14 @@ const GPU_LADDER = [
   "NVIDIA RTX A6000",
 ];
 
-// Startup: everything logged into the served directory so progress is pollable
-// from outside. status.txt appears only when the whole pipeline finished.
-const START_CMD = [
-  "bash -c '",
-  "mkdir -p /workspace/out && cd /workspace/out && nohup python -m http.server 8000 >/dev/null 2>&1 & ",
-  "cd /workspace && git clone --depth 1 " + REPO + " repo >> /workspace/out/train.log 2>&1 && ",
-  "cd repo/finetune && pip install unsloth >> /workspace/out/train.log 2>&1 && ",
-  "python train.py >> /workspace/out/train.log 2>&1 && ",
-  "cp gguf/*.gguf /workspace/out/model.gguf && echo DONE > /workspace/out/status.txt || echo FAILED > /workspace/out/status.txt; ",
-  "sleep infinity'",
-].join("");
+// Startup: minimal quoting — fetch the real pipeline (finetune/pod-run.sh on
+// main) and run it with all output into the HTTP-served log. status.txt is
+// written by the script (DONE/FAILED) or here if the fetch itself fails.
+const RAW_SH = "https://raw.githubusercontent.com/firelever/firelever/main/finetune/pod-run.sh";
+const START_CMD =
+  `bash -c "mkdir -p /workspace/out && cd /workspace/out && (python -m http.server 8000 &) && ` +
+  `(curl -sfL ${RAW_SH} -o /workspace/run.sh || echo BOOTFAIL > /workspace/out/status.txt) && ` +
+  `bash /workspace/run.sh > /workspace/out/train.log 2>&1; sleep infinity"`;
 
 async function gql(query: string, variables: Record<string, unknown> = {}) {
   const res = await fetch(API, {
