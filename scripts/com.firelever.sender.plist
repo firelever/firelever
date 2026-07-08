@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily send/follow-up run at 9:30am. Install AFTER setting GMAIL_USER,
+     GMAIL_APP_PASSWORD in .env and the postal address in src/config.ts:
+       cp scripts/com.firelever.sender.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.firelever.sender.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.firelever.sender</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/npm</string>
+    <string>run</string>
+    <string>send</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/peterpeng/code/projects/firelever</string>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>/Users/peterpeng/code/projects/firelever/sender.log</string>
+  <key>StandardErrorPath</key><string>/Users/peterpeng/code/projects/firelever/sender.log</string>
+</dict>
+</plist>

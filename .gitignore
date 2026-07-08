@@ -1,0 +1,11 @@
+node_modules/
+dist/
+leads.db
+leads.db-*
+kb.db
+kb.db-*
+.env
+# generated artifacts containing prospect data — never publish
+outbox.md
+dashboard.html
+.claude/settings.local.json
