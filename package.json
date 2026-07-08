@@ -22,6 +22,8 @@
     "eval:triage": "tsx src/triage/eval.ts",
     "serve": "tsx src/server/index.ts",
     "tenant": "tsx src/server/tenant-cli.ts",
+    "corpus": "tsx src/finetune/generate-corpus.ts",
+    "gpu": "tsx src/finetune/gpu.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
