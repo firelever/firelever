@@ -9,12 +9,17 @@ export interface Embedder {
 // BGE models want this prefix on queries (not documents) for retrieval tasks.
 const BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
 
+export const LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
+
 function localEmbedder(): Embedder {
   let extractorPromise: Promise<any> | null = null;
   const getExtractor = () => {
-    extractorPromise ??= import("@huggingface/transformers").then(({ pipeline }) =>
-      pipeline("feature-extraction", "Xenova/bge-small-en-v1.5", { dtype: "fp32" })
-    );
+    extractorPromise ??= import("@huggingface/transformers").then(({ pipeline, env }) => {
+      // TRANSFORMERS_CACHE points at the model baked into the image in production
+      // (see Dockerfile); locally it's unset and the library uses its default cache.
+      if (process.env.TRANSFORMERS_CACHE) env.cacheDir = process.env.TRANSFORMERS_CACHE;
+      return pipeline("feature-extraction", LOCAL_MODEL, { dtype: "fp32" });
+    });
     return extractorPromise;
   };
   return {

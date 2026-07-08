@@ -12,12 +12,15 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY web ./web
+COPY scripts ./scripts
 
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# The embedding model downloads to this cache on first request; the volume keeps
-# it and the SQLite databases across restarts.
-ENV HF_HOME=/data/hf
+# Bake the embedding model into the image at build time — no runtime download,
+# deterministic cold starts, works even if HuggingFace is unreachable.
+ENV TRANSFORMERS_CACHE=/app/models
+RUN npx tsx scripts/prefetch-model.mjs
+
 CMD ["npx", "tsx", "src/server/index.ts"]
