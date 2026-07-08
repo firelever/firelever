@@ -51,6 +51,25 @@ programmatic citation checks. Current (2026-07-08): refusal 100%, faithfulness 1
 citation accuracy 100%, correctness 93.3%; 1 of 16 wrongly refused, traced to a known
 retrieval miss on the PRD latency table, not an answering bug.
 
+## Email triage
+
+Slice 4 ([ADR-004](docs/adr/ADR-004-email-triage.md)): inbound email is classified
+(new business / support / vendor / recruiting / spam / other) and anything needing a
+response gets a reply drafted from the knowledge base — grounded in retrieved sources,
+with a low-confidence flag when the corpus lacks an answer. Nothing sends
+automatically; approved drafts are copy-pasted into Gmail.
+
+```sh
+npm run triage -- --demo        # synthetic emails, no credentials needed
+npm run triage -- --imap        # unseen Gmail messages (GMAIL_* in .env)
+npm run triage:review           # approve / reject / ignore each draft
+npm run eval:triage             # classification accuracy vs keyword baseline
+```
+
+Current eval (synthetic 24-email golden set, to be replaced with real labeled
+traffic): 100% classification accuracy vs 83.3% keyword baseline, including a
+prompt-injection email correctly filed as spam.
+
 ## MCP server
 
 `npm run mcp` starts a read-only [MCP](https://modelcontextprotocol.io) server over

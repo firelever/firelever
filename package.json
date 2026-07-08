@@ -17,6 +17,9 @@
     "eval": "tsx src/rag/eval.ts",
     "ask": "tsx src/rag/ask-cli.ts",
     "eval:qa": "tsx src/rag/eval-qa.ts",
+    "triage": "tsx src/triage/run.ts",
+    "triage:review": "tsx src/triage/review.ts",
+    "eval:triage": "tsx src/triage/eval.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
