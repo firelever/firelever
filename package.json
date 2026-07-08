@@ -24,6 +24,7 @@
     "tenant": "tsx src/server/tenant-cli.ts",
     "corpus": "tsx src/finetune/generate-corpus.ts",
     "gpu": "tsx src/finetune/gpu.ts",
+    "eval:student": "tsx src/finetune/eval-student.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

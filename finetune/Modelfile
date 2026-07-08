@@ -1,3 +1,10 @@
 FROM ./unsloth.Q4_K_M.gguf
+# Qwen2.5 uses ChatML; spell it out rather than trusting template autodetection.
+TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+PARAMETER stop <|im_end|>
+PARAMETER stop <|im_start|>
 PARAMETER temperature 0
 PARAMETER num_ctx 4096

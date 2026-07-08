@@ -10,3 +10,5 @@ outbox.md
 qa-log.jsonl
 dashboard.html
 .claude/settings.local.json
+finetune/*.gguf
+finetune/.pod.json

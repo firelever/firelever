@@ -1,1 +1,2 @@
 {"at":"2026-07-08T17:15:13.480Z","n":24,"synthetic":true,"accuracy":1,"baseline_accuracy":0.8333333333333334}
+{"at":"2026-07-08T22:46:25.451Z","model":"student:firelever-triage","n":24,"synthetic":true,"accuracy":0.9166666666666666,"mean_latency_ms":2952}

@@ -51,6 +51,22 @@ programmatic citation checks. Current (2026-07-08): refusal 100%, faithfulness 1
 citation accuracy 100%, correctness 93.3%; 1 of 16 wrongly refused, traced to a known
 retrieval miss on the PRD latency table, not an answering bug.
 
+## Fine-tuned triage model
+
+Slice 6 ([ADR-006](docs/adr/ADR-006-finetune-distillation.md), results in
+[docs/04-finetune-benchmark.md](docs/04-finetune-benchmark.md)): Qwen2.5-7B
+LoRA-distilled from the production Opus classifier on 300 synthetic emails, trained
+on a $0.16/hr RunPod A5000, served locally via Ollama. On the human-labeled golden
+set: **student 91.7% · teacher 100% · keyword baseline 83.3%**, at ~$0 vs ~$5 per
+1,000 emails. Notable finding: the student fell for a prompt-injection email the
+teacher resisted — distillation transfers the task, not the robustness.
+
+```sh
+npm run corpus            # generate + teacher-label training data
+npm run gpu -- launch     # unattended RunPod training run
+npm run eval:student      # benchmark the local model on the golden set
+```
+
 ## Copilot server + web UI
 
 Slice 5a ([ADR-005](docs/adr/ADR-005-hosted-api-and-ui.md)): a tenant-authenticated
