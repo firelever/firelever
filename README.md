@@ -51,6 +51,22 @@ programmatic citation checks. Current (2026-07-08): refusal 100%, faithfulness 1
 citation accuracy 100%, correctness 93.3%; 1 of 16 wrongly refused, traced to a known
 retrieval miss on the PRD latency table, not an answering bug.
 
+## Copilot server + web UI
+
+Slice 5a ([ADR-005](docs/adr/ADR-005-hosted-api-and-ui.md)): a tenant-authenticated
+HTTP API (Hono) over the RAG and triage stack, plus a customer-facing web interface —
+grounded Q&A with expandable citations, document upload, and the triage review queue —
+styled to the firelever.com brand.
+
+```sh
+npm run tenant -- create acme "Acme Freight"   # mints a flv_ API key (shown once)
+npm run serve                                  # http://localhost:8787
+```
+
+Auth: per-tenant bearer keys, SHA-256 at rest, constant-time compare. Every route is
+tenant-scoped; the growth pipeline (leads.db) is not exposed. Nothing sends email —
+approving a triage draft only marks it approved.
+
 ## Email triage
 
 Slice 4 ([ADR-004](docs/adr/ADR-004-email-triage.md)): inbound email is classified

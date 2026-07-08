@@ -4,11 +4,10 @@
 // unchanged file (same content hash) is a no-op; changed files are re-chunked.
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
-import { extractText, SUPPORTED } from "./extract.js";
-import { chunkText, CHUNKER_VERSION } from "./chunker.js";
+import { SUPPORTED } from "./extract.js";
 import { getEmbedder } from "./embeddings.js";
-import { ensureVecTable, findDocument, insertDocumentWithChunks } from "./store.js";
+import { ensureVecTable } from "./store.js";
+import { ingestFile } from "./ingest-file.js";
 
 function collectFiles(targets: string[]): { files: string[]; unsupported: string[] } {
   const files: string[] = [];
@@ -50,34 +49,16 @@ async function main() {
 
   for (const file of files) {
     const rel = path.relative(process.cwd(), file);
-    const { text, title } = await extractText(file);
-    const hash = crypto
-      .createHash("sha256")
-      .update(`${CHUNKER_VERSION}:${embedder.name}:${text}`)
-      .digest("hex");
-    if (findDocument(tenantId, rel)?.content_hash === hash) {
+    const result = await ingestFile(tenantId, file, rel);
+    if (result.outcome === "unchanged") {
       unchanged++;
-      continue;
-    }
-    const chunks = chunkText(text, path.basename(file));
-    if (!chunks.length) {
+    } else if (result.outcome === "empty") {
       console.warn(`  skip (empty): ${rel}`);
-      continue;
+    } else {
+      ingested++;
+      totalChunks += result.chunks;
+      console.log(`  ingested: ${rel} (${result.chunks} chunks)`);
     }
-    const embeddings = await embedder.embed(
-      chunks.map((c) => c.text),
-      "doc"
-    );
-    insertDocumentWithChunks(
-      tenantId,
-      rel,
-      title,
-      hash,
-      chunks.map((c, i) => ({ ...c, embedding: embeddings[i] }))
-    );
-    ingested++;
-    totalChunks += chunks.length;
-    console.log(`  ingested: ${rel} (${chunks.length} chunks)`);
   }
 
   console.log(

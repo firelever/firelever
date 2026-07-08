@@ -20,13 +20,17 @@
     "triage": "tsx src/triage/run.ts",
     "triage:review": "tsx src/triage/review.ts",
     "eval:triage": "tsx src/triage/eval.ts",
+    "serve": "tsx src/server/index.ts",
+    "tenant": "tsx src/server/tenant-cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
+    "@hono/node-server": "^2.0.8",
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.2.0",
+    "hono": "^4.12.28",
     "imapflow": "^1.4.3",
     "mailparser": "^3.9.14",
     "mammoth": "^1.12.0",

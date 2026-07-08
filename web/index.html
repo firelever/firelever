@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FireLever Copilot</title>
+<meta name="theme-color" content="#070707">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,650&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* FireLever brand (firelever.com): near-black ground, warm cream ink, fire-orange
+     accent, Fraunces display over Hanken Grotesk. */
+  :root {
+    --bg: #070707; --panel: #141311; --panel-2: #0F0E0D; --ink: #F4F1EA; --muted: #9A958B;
+    --border: #262320; --accent: #FF5C2B; --accent-hi: #FF7448; --accent-ink: #1A0C05;
+    --accent-dim: #33170C; --accent-soft: #FF8B5E;
+    --ok: #8DBB97; --warn-bg: #2A2210; --warn-ink: #D9B45C; --danger: #FF9B93;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --display: "Fraunces", Georgia, serif;
+    --body: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 var(--body); }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 30px 20px 80px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { display: block; border-radius: 9px; }
+  .wordmark { font-family: var(--display); font-weight: 650; font-size: 25px; letter-spacing: -0.01em; }
+  .wordmark .co { font-weight: 400; font-style: italic; color: var(--muted); }
+  .tenant-badge { font-size: 13px; color: var(--muted); }
+  .tagline { color: var(--muted); font-size: 14.5px; margin: 0 0 26px; }
+
+  nav { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  nav button {
+    appearance: none; background: none; border: none; cursor: pointer;
+    font: 600 15px var(--body); color: var(--muted);
+    padding: 10px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  nav button .count {
+    background: var(--accent); color: var(--accent-ink); border-radius: 9px; font-size: 11px;
+    font-weight: 700; padding: 1px 7px; margin-left: 6px; vertical-align: 1px;
+  }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 14px;
+  }
+  h2 { font-family: var(--display); font-weight: 650; font-size: 19px; margin: 0 0 10px; }
+  .hint { color: var(--muted); font-size: 13.5px; }
+  .hint code { font-family: var(--mono); font-size: 12.5px; color: var(--accent-soft); }
+
+  textarea, input[type=text], input[type=password], input[type=file] {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+    padding: 11px 13px; font: inherit; color: var(--ink); resize: vertical;
+  }
+  textarea::placeholder, input::placeholder { color: #6B665D; }
+  textarea:focus, input:focus { outline: 2px solid rgba(255, 92, 43, .35); border-color: var(--accent); }
+  .btn {
+    appearance: none; border: none; cursor: pointer; border-radius: 8px;
+    font: 700 14.5px var(--body); padding: 10px 18px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  .btn:hover { background: var(--accent-hi); }
+  .btn[disabled] { opacity: .5; cursor: default; }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--border); font-weight: 600; }
+  .btn.ghost:hover { background: var(--panel-2); }
+  .btn.small { padding: 7px 13px; font-size: 13.5px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+
+  .answer { white-space: pre-wrap; }
+  .answer .cite {
+    display: inline-block; background: var(--accent-dim); color: var(--accent-soft);
+    border-radius: 6px; font: 600 12px var(--mono); padding: 1px 6px; margin: 0 1px; cursor: pointer;
+  }
+  .refusal { border-left: 3px solid var(--warn-ink); background: var(--warn-bg); border-radius: 8px; padding: 12px 14px; color: #E8DFC8; }
+  details.src { border-top: 1px dashed var(--border); padding: 9px 2px 3px; margin-top: 9px; }
+  details.src summary { cursor: pointer; font-size: 13.5px; color: var(--muted); }
+  details.src summary b { color: var(--accent-soft); font-family: var(--mono); font-weight: 600; font-size: 12.5px; }
+  details.src blockquote { margin: 8px 0 2px; padding: 8px 12px; background: var(--panel-2); border-radius: 6px; font-size: 13.5px; color: #C9C3B8; }
+
+  .doc-row { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 2px; border-bottom: 1px dashed var(--border); font-size: 14.5px; }
+  .doc-row:last-child { border-bottom: none; }
+  .doc-row .meta { color: var(--muted); font-size: 12.5px; white-space: nowrap; margin-left: 12px; }
+  .doc-row .name { font-family: var(--mono); font-size: 13px; }
+
+  .pill { display: inline-block; border-radius: 20px; font-size: 11.5px; font-weight: 700; padding: 2px 10px; margin-right: 6px; }
+  .pill.cat { background: var(--accent-dim); color: var(--accent-soft); }
+  .pill.high { background: #3A1414; color: var(--danger); }
+  .pill.lowconf { background: var(--warn-bg); color: var(--warn-ink); }
+  .mail-from { color: var(--muted); font-size: 13px; }
+  .mail-subject { font-weight: 650; margin: 2px 0 8px; font-size: 16.5px; }
+  .draft-box { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; white-space: pre-wrap; font-size: 14.5px; margin-top: 10px; }
+  .grounded { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .grounded code { font-family: var(--mono); font-size: 11.5px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; color: var(--accent-soft); }
+
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--accent-dim); border-top-color: var(--accent); border-radius: 50%; animation: r .7s linear infinite; vertical-align: -2px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .flash { font-size: 13.5px; margin-top: 10px; }
+  .flash.ok { color: var(--ok); } .flash.err { color: var(--danger); }
+  .empty { color: var(--muted); text-align: center; padding: 30px 0; font-size: 14.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <!-- FireLever mark (firelever.com/assets/favicon.svg) -->
+      <svg width="34" height="34" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="FireLever"><rect width="64" height="64" rx="14" fill="#070707"></rect><svg x="12" y="12" width="40" height="40" viewBox="113.33035977770822 221.87628057020805 130.8356748760459 156.247438859584" preserveAspectRatio="xMidYMid meet"><path d="M153.15921545124678,245.75429637825115C140.04694207912632,258.88732298880234 128.60624772969635,270.53460639351965 127.73531921237188,271.6371221851503C124.49003155277207,275.7453200654082 121.04829562484534,281.38029596385144 119.09324623177199,285.7870574788054C112.9455710111886,299.6426741183526 111.66004938976003,315.1170433554939 115.4534112097341,329.5938421544325C119.42459054989841,344.74842285393714 129.0845155426219,358.26161105937786 142.21424050160454,367.03009012860105C150.86386011436105,372.80632954772597 159.60262431946757,376.1367526513426 170.16036270657347,377.68051059188036C174.54094684123422,378.32103099617314 183.90372319279095,378.25995044215557 188.40340261617325,377.5616511354137C209.34860850235145,374.31070350169637 227.5150029291106,361.220598361536 237.0548893040929,342.5047147808732C246.72778507083558,323.5282365585523 246.54430757652784,301.1081357502655 236.56034906557966,282.0995843412789C232.607800473552,274.5744129198582 230.40347638705543,271.8335704534772 219.46699139858936,260.8463815302089C211.4677971448312,252.80992578017742 210.15845646565833,251.5873713708056 209.54434927391367,251.58123973217835C208.9186863016792,251.5748722612962 207.21503409232315,253.21060478124275 194.8048333430229,265.7328258516178C184.5256128489471,276.1049642541219 180.6308431593685,279.89172277095895 180.24219160330279,279.891486938704C179.95046710399856,279.89125110644915 179.49932000038586,279.6790020770443 179.2399045200022,279.4195865966606C178.7734283198214,278.9531103964798 178.76824001021367,278.6335576910981 178.76824001021367,250.7794100655379L178.76824001021367,222.61066221194878L178.24398490758375,222.24370722333333C177.95579789210296,222.04183481314385 177.5579488780964,221.87628057020808 177.35961395173035,221.87628057020808C177.16151485761912,221.87604473795318 166.27125299111236,232.62103393544513 153.15921545124678,245.75429637825115M213.1825334701673,297.2213843573533C217.16338193278227,298.0585888622279 220.54285814541691,299.82874576746417 223.51764620865305,302.63444210394107C227.6307965662637,306.51388269695155 229.76649346658604,310.76381576240084 230.41762632234907,316.3657751451589C231.4913705788826,325.6004945823081 225.87101628024277,334.9491209985712 217.0942830820983,338.52740380208166C213.2245116115385,340.1051215873242 215.18569264323912,340.02847610448356 178.6651813148249,340.02847610448356L145.57626512737698,340.02847610448356L143.29317306774573,339.4492720864633C137.20209758833698,337.90409915239616 132.06449191546568,333.7631205887079 129.23568401800912,328.1189472323238C127.49217615757591,324.6401856403787 127.05093400866875,322.72428440161775 127.03560491210062,318.5677409091066C127.02169080906187,314.7715491020738 127.31294364385627,313.1702480913418 128.5628545947958,310.16763182202817C131.30652704823552,303.5770636267534 137.2792147356874,298.67835602809 144.33673079565278,297.2301101507844C146.74740810518185,296.73533408001623 210.83364421142056,296.7273157833498 213.1825334701673,297.2213843573533M146.8709842067464,310.0836755392858C144.26362279663556,310.74023253691144 142.12438841248982,312.51675691302984 140.95701875076327,314.99464641520376C140.31414002392154,316.3587001775121 140.2198071219638,316.80890395210525 140.23254206372812,318.44982478165946C140.26013443755073,321.9840069535047 142.06943949709944,324.8330964248822 145.21685677091816,326.2980863922853C146.38894307774257,326.84380223011055 146.88702080007926,326.93176766118614 148.8175436386436,326.93554097726445C150.75443394809008,326.93931429334276 151.23364509003522,326.85582967511016 152.3550274620574,326.32072628875517C154.16338919258652,325.4573444035873 155.44560916244657,324.264740690587 156.31134937016338,322.64032811887546C159.2962782203599,317.0400195619016 155.68332807537996,310.4124257026084 149.40712427587923,309.97566436654427C148.49917009453634,309.9124613222326 147.35797781310305,309.96104276674083 146.8709842067464,310.0836755392858M206.91599879311724,310.0728272555607C202.48871987198743,311.0137979525888 199.45544540953756,315.4637167701884 200.2471342892175,319.8560925175939C200.77115355959256,322.7622533946558 202.45428836277284,324.96327582958384 205.17437759072317,326.29926555355974C206.31533403990153,326.85960299118847 206.75893451135767,326.93978595785256 208.7189363817838,326.93978595785256C210.65794918152432,326.93978595785256 211.14140530405757,326.8544146815808 212.3120766173526,326.3058688566968C216.87543074955641,324.16710613706084 218.61327863587218,318.7788107772369 216.20260132634309,314.24399234787535C214.5567280194361,311.1477506733687 210.47777333878508,309.3155698850952 206.91599879311724,310.0728272555607" fill-rule="evenodd" fill="#f55911" stroke="none"></path></svg></svg>
+      <div class="wordmark">FireLever <span class="co">Copilot</span></div>
+    </div>
+    <div class="tenant-badge" id="tenantBadge"></div>
+  </header>
+  <p class="tagline">Answers from your documents, with receipts.</p>
+
+  <!-- key gate -->
+  <div id="gate" class="card" style="display:none">
+    <h2>Connect your workspace</h2>
+    <p class="hint">Paste the API key you were given (starts with <code>flv_</code>). It stays in this browser.</p>
+    <div class="row">
+      <input type="password" id="keyInput" placeholder="flv_…" autocomplete="off">
+      <button class="btn" id="keySave">Connect</button>
+    </div>
+    <div class="flash err" id="keyErr"></div>
+  </div>
+
+  <div id="appUi" style="display:none">
+    <nav>
+      <button data-tab="ask" class="active">Ask</button>
+      <button data-tab="docs">Documents</button>
+      <button data-tab="inbox">Inbox <span class="count" id="inboxCount" style="display:none"></span></button>
+    </nav>
+
+    <section id="tab-ask">
+      <div class="card">
+        <textarea id="question" rows="2" placeholder="Ask anything answered by your documents…"></textarea>
+        <div class="row">
+          <button class="btn" id="askBtn">Ask</button>
+          <span class="hint" id="askStatus"></span>
+        </div>
+      </div>
+      <div id="answers"></div>
+    </section>
+
+    <section id="tab-docs" style="display:none">
+      <div class="card">
+        <h2>Add documents</h2>
+        <p class="hint">PDF, Word, Markdown, or plain text. Files are chunked and indexed for retrieval; re-uploading an unchanged file is a no-op.</p>
+        <div class="row">
+          <input type="file" id="fileInput" accept=".pdf,.docx,.md,.markdown,.txt">
+          <button class="btn" id="uploadBtn">Upload</button>
+        </div>
+        <div class="flash" id="uploadFlash"></div>
+      </div>
+      <div class="card">
+        <h2>In your knowledge base</h2>
+        <div id="docList" class="empty">Loading…</div>
+      </div>
+    </section>
+
+    <section id="tab-inbox" style="display:none">
+      <p class="hint" style="margin:0 0 14px">Drafted replies waiting for your call. Nothing is ever sent automatically — approve, then send from your own mailbox.</p>
+      <div id="queue"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let KEY = localStorage.getItem("flv_key") || "";
+
+async function api(path, opts = {}) {
+  const res = await fetch("/api" + path, {
+    ...opts,
+    headers: { Authorization: "Bearer " + KEY, ...(opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}), ...opts.headers },
+  });
+  if (!res.ok) throw Object.assign(new Error((await res.json().catch(() => ({}))).error || res.statusText), { status: res.status });
+  return res.json();
+}
+
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+// ---------- boot / key gate ----------
+async function boot() {
+  if (!KEY) return showGate();
+  try {
+    const me = await api("/me");
+    $("tenantBadge").textContent = me.name;
+    $("gate").style.display = "none";
+    $("appUi").style.display = "block";
+    loadDocs(); loadQueue();
+  } catch (e) {
+    if (e.status === 401) { localStorage.removeItem("flv_key"); KEY = ""; showGate("That key wasn't accepted."); }
+  }
+}
+function showGate(err) {
+  $("gate").style.display = "block"; $("appUi").style.display = "none";
+  $("keyErr").textContent = err || "";
+}
+$("keySave").onclick = () => { KEY = $("keyInput").value.trim(); localStorage.setItem("flv_key", KEY); boot(); };
+$("keyInput").addEventListener("keydown", (e) => e.key === "Enter" && $("keySave").click());
+
+// ---------- tabs ----------
+document.querySelectorAll("nav button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    ["ask", "docs", "inbox"].forEach((t) => $("tab-" + t).style.display = b.dataset.tab === t ? "" : "none");
+  };
+});
+
+// ---------- ask ----------
+$("askBtn").onclick = ask;
+$("question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+async function ask() {
+  const q = $("question").value.trim();
+  if (!q) return;
+  $("askBtn").disabled = true;
+  $("askStatus").innerHTML = '<span class="spin"></span> Reading your documents…';
+  try {
+    const r = await api("/ask", { method: "POST", body: JSON.stringify({ question: q }) });
+    const card = document.createElement("div");
+    card.className = "card";
+    if (!r.answerable) {
+      card.innerHTML = `<div class="hint" style="margin-bottom:8px">${esc(q)}</div>
+        <div class="refusal">I can't find this in your documents. Try uploading whatever covers it, then ask again.</div>`;
+    } else {
+      const body = esc(r.answer).replace(/\[(\d+)\]/g, (_, n) => `<span class="cite" title="source ${n}">${n}</span>`);
+      const cites = r.citations.map((c) =>
+        `<details class="src"><summary>[${c.n}] <b>${esc(c.document)}</b>${c.heading ? " · " + esc(c.heading) : ""}</summary><blockquote>${esc(c.excerpt)}…</blockquote></details>`
+      ).join("");
+      card.innerHTML = `<div class="hint" style="margin-bottom:8px">${esc(q)}</div><div class="answer">${body}</div>${cites}`;
+    }
+    $("answers").prepend(card);
+    $("question").value = "";
+  } catch (e) {
+    $("askStatus").textContent = "Error: " + e.message; setTimeout(() => $("askStatus").textContent = "", 4000);
+  } finally {
+    $("askBtn").disabled = false;
+    if ($("askStatus").querySelector(".spin")) $("askStatus").textContent = "";
+  }
+}
+
+// ---------- documents ----------
+async function loadDocs() {
+  const { documents } = await api("/documents");
+  $("docList").className = documents.length ? "" : "empty";
+  $("docList").innerHTML = documents.length
+    ? documents.map((d) => `<div class="doc-row"><span class="name">${esc(d.path)}</span><span class="meta">${d.chunks} chunks · ${d.ingested_at.slice(0, 10)}</span></div>`).join("")
+    : "Nothing yet — upload your first document above.";
+}
+$("uploadBtn").onclick = async () => {
+  const f = $("fileInput").files[0];
+  if (!f) return;
+  $("uploadBtn").disabled = true;
+  $("uploadFlash").className = "flash"; $("uploadFlash").innerHTML = '<span class="spin"></span> Indexing…';
+  try {
+    const fd = new FormData(); fd.append("file", f);
+    const r = await api("/documents", { method: "POST", body: fd });
+    $("uploadFlash").className = "flash ok";
+    $("uploadFlash").textContent = r.outcome === "ingested" ? `Indexed ${f.name} (${r.chunks} chunks).`
+      : r.outcome === "unchanged" ? "Already indexed — no changes." : "That file appears to be empty.";
+    loadDocs();
+  } catch (e) {
+    $("uploadFlash").className = "flash err"; $("uploadFlash").textContent = "Upload failed: " + e.message;
+  } finally { $("uploadBtn").disabled = false; }
+};
+
+// ---------- inbox ----------
+async function loadQueue() {
+  const { queue } = await api("/triage");
+  $("inboxCount").style.display = queue.length ? "" : "none";
+  $("inboxCount").textContent = queue.length;
+  $("queue").innerHTML = queue.length ? "" : '<div class="card empty">Inbox zero — no drafts waiting.</div>';
+  for (const m of queue) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div><span class="pill cat">${esc(m.category ?? "")}</span>${m.urgency === "high" ? '<span class="pill high">high urgency</span>' : ""}${m.confident ? "" : '<span class="pill lowconf">low confidence — check facts</span>'}</div>
+      <div class="mail-from" style="margin-top:8px">${esc(m.from)}</div>
+      <div class="mail-subject">${esc(m.subject)}</div>
+      <details class="src"><summary>Original message</summary><blockquote>${esc(m.body.slice(0, 1200))}</blockquote></details>
+      <div class="draft-box">${esc(m.draft ?? "")}</div>
+      ${m.grounded_in.length ? `<div class="grounded">Grounded in ${m.grounded_in.map((g) => `<code>${esc(g)}</code>`).join(" ")}</div>` : ""}
+      <div class="row">
+        <button class="btn small" data-v="approved">Approve</button>
+        <button class="btn small ghost" data-v="rejected">Reject</button>
+        <button class="btn small ghost" data-v="ignored">Ignore thread</button>
+      </div>`;
+    card.querySelectorAll("[data-v]").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        await api(`/triage/${m.id}/verdict`, { method: "POST", body: JSON.stringify({ verdict: btn.dataset.v }) });
+        card.style.opacity = ".45"; setTimeout(loadQueue, 350);
+      };
+    });
+    $("queue").appendChild(card);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
