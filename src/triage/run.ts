@@ -4,9 +4,17 @@
 //   npm run triage -- --imap                 # unseen messages from the Gmail inbox
 // Then: npm run triage:review
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { classifyEmail, draftReply } from "./engine.js";
 import { insertEmail, updateEmail } from "./store.js";
+import { ingestFile } from "../rag/ingest-file.js";
+import { SUPPORTED } from "../rag/extract.js";
+
+interface Attachment {
+  filename: string;
+  content: Buffer;
+}
 
 interface RawEmail {
   message_id: string;
@@ -14,6 +22,49 @@ interface RawEmail {
   subject: string;
   body: string;
   received_at: string | null;
+  attachments: Attachment[];
+}
+
+// Only pull documents from genuine correspondence — never from bulk/spam senders,
+// so marketing PDFs don't pollute the knowledge base.
+const ATTACH_CATEGORIES = new Set(["new_business", "support", "vendor_partner"]);
+const ATTACH_MAX_BYTES = 30 * 1024 * 1024;
+
+// Ingest an email's document attachments into the knowledge base, tagged with
+// provenance (who sent it, when, about what) so the copilot can answer
+// "who sent us the contract?" as well as what's inside it.
+async function ingestAttachments(
+  tenantId: string,
+  email: RawEmail,
+  category: string
+): Promise<string[]> {
+  if (!ATTACH_CATEGORIES.has(category) || email.attachments.length === 0) return [];
+  const domain = email.from_addr.split("@")[1] ?? "unknown";
+  const preamble =
+    `[Received via email]\n` +
+    `From: ${email.from_addr}\n` +
+    `Subject: ${email.subject}\n` +
+    `Date: ${email.received_at ?? "unknown"}\n` +
+    `Email note: ${email.body.slice(0, 300)}`;
+  const added: string[] = [];
+  for (const att of email.attachments) {
+    const name = path.basename(att.filename || "attachment");
+    const ext = path.extname(name).toLowerCase();
+    if (!SUPPORTED.includes(ext) || att.content.length > ATTACH_MAX_BYTES) continue;
+    const tmp = path.join(os.tmpdir(), `flv-att-${Date.now()}-${name}`);
+    fs.writeFileSync(tmp, att.content);
+    try {
+      const r = await ingestFile(tenantId, tmp, `email/${domain}/${name}`, { preamble });
+      if (r.outcome === "ingested" || r.outcome === "unchanged") added.push(name);
+    } catch (e) {
+      console.error(`    attachment failed (${name}): ${e instanceof Error ? e.message : e}`);
+    } finally {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {}
+    }
+  }
+  return added;
 }
 
 function parseEmailFile(filePath: string): RawEmail {
@@ -29,6 +80,7 @@ function parseEmailFile(filePath: string): RawEmail {
     subject: get("Subject") || "(no subject)",
     body: body.trim(),
     received_at: null,
+    attachments: [],
   };
 }
 
@@ -44,6 +96,7 @@ function loadDemoEmails(): RawEmail[] {
     subject: g.subject,
     body: g.body,
     received_at: null,
+    attachments: [],
   }));
 }
 
@@ -81,6 +134,9 @@ async function fetchImapUnseen(): Promise<RawEmail[]> {
         subject: parsed.subject ?? "(no subject)",
         body: body.slice(0, 8000),
         received_at: parsed.date?.toISOString() ?? null,
+        attachments: (parsed.attachments ?? [])
+          .filter((a) => a.filename)
+          .map((a) => ({ filename: a.filename as string, content: a.content })),
       });
     }
   } finally {
@@ -145,6 +201,16 @@ async function main() {
           draft_confident: d.confident ? 1 : 0,
           status: "drafted",
         });
+      }
+
+      // Pull document attachments into the knowledge base, with provenance.
+      const added = await ingestAttachments(tenantId, e, c.category);
+      if (added.length) {
+        updateEmail(id, {
+          attachments_ingested: added.length,
+          attachments_json: JSON.stringify(added),
+        });
+        console.log(`    + ${added.length} attachment(s) added to knowledge base: ${added.join(", ")}`);
       }
       processed++;
     } catch (err) {

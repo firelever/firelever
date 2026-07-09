@@ -305,6 +305,7 @@ async function loadQueue() {
       <details class="src"><summary>Original message</summary><blockquote>${esc(m.body.slice(0, 1200))}</blockquote></details>
       <div class="draft-box">${esc(m.draft ?? "")}</div>
       ${m.grounded_in.length ? `<div class="grounded">Grounded in ${m.grounded_in.map((g) => `<code>${esc(g)}</code>`).join(" ")}</div>` : ""}
+      ${m.attachments && m.attachments.length ? `<div class="grounded">Added to knowledge base: ${m.attachments.map((a) => `<code>${esc(a)}</code>`).join(" ")}</div>` : ""}
       <div class="row">
         <button class="btn small" data-v="approved">Approve</button>
         <button class="btn small ghost" data-v="rejected">Reject</button>

@@ -28,6 +28,19 @@ CREATE TABLE IF NOT EXISTS inbound_emails (
 );
 `);
 
+// Additive migration: attachment ingestion (see run.ts). ADD COLUMN throws if the
+// column already exists, so each is guarded.
+for (const [col, def] of [
+  ["attachments_ingested", "INTEGER DEFAULT 0"],
+  ["attachments_json", "TEXT"],
+]) {
+  try {
+    db.exec(`ALTER TABLE inbound_emails ADD COLUMN ${col} ${def}`);
+  } catch {
+    // column already present
+  }
+}
+
 export interface InboundEmail {
   id: number;
   tenant_id: string;
@@ -44,6 +57,8 @@ export interface InboundEmail {
   draft_sources_json: string | null;
   draft_confident: number | null;
   status: string;
+  attachments_ingested: number | null;
+  attachments_json: string | null;
   created_at: string;
   updated_at: string;
 }

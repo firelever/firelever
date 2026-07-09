@@ -143,6 +143,7 @@ app.get("/api/triage", (c) => {
     draft: e.draft_reply,
     confident: e.draft_confident === 1,
     grounded_in: JSON.parse(e.draft_sources_json ?? "[]"),
+    attachments: JSON.parse(e.attachments_json ?? "[]"),
   }));
   return c.json({ queue: drafted });
 });

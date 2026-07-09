@@ -12,15 +12,24 @@ export type IngestResult =
   | { outcome: "unchanged" }
   | { outcome: "empty" };
 
+export interface IngestOptions {
+  // Prepended before chunking so provenance rides with the document — e.g. an
+  // email-received header travels into every chunk and answers "who sent this?".
+  preamble?: string;
+}
+
 export async function ingestFile(
   tenantId: string,
   filePath: string,
-  displayPath: string
+  displayPath: string,
+  opts: IngestOptions = {}
 ): Promise<IngestResult> {
   const embedder = getEmbedder();
   ensureVecTable(embedder.name, embedder.dim);
 
-  const { text, title } = await extractText(filePath);
+  const extracted = await extractText(filePath);
+  const title = extracted.title;
+  const text = opts.preamble ? `${opts.preamble}\n\n${extracted.text}` : extracted.text;
   const hash = crypto
     .createHash("sha256")
     .update(`${CHUNKER_VERSION}:${embedder.name}:${text}`)
