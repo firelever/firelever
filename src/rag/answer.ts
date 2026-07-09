@@ -10,7 +10,11 @@ import { getEmbedder } from "./embeddings.js";
 import { search, Hit } from "./retrieval.js";
 
 export const PROMPT_VERSION = "qa-v1";
-const K = 6;
+// Retrieve enough context that answers to long documents (multi-page contracts)
+// aren't missed because the relevant page didn't rank in a tiny top-k. Opus has
+// ample context budget; more chunks meaningfully narrows the gap with reading the
+// whole document. Tunable via ANSWER_K.
+const K = Number(process.env.ANSWER_K ?? 16);
 const LOG_PATH = path.join(process.cwd(), "qa-log.jsonl");
 
 const AnswerSchema = z.object({

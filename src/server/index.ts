@@ -2,6 +2,7 @@
 //   npm run serve     → http://localhost:8787
 // Every route is tenant-scoped by bearer key; no endpoint touches leads.db.
 import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import fs from "fs";
 import os from "os";
@@ -98,12 +99,35 @@ app.post("/api/documents", limited("upload"), async (c) => {
   // Write to a temp file so the shared extract/ingest path applies unchanged.
   const tmp = path.join(os.tmpdir(), `flv-upload-${Date.now()}${ext}`);
   fs.writeFileSync(tmp, Buffer.from(await file.arrayBuffer()));
-  try {
-    const result = await ingestFile(tenant.id, tmp, `uploads/${path.basename(file.name)}`);
-    return c.json(result);
-  } finally {
-    fs.unlinkSync(tmp);
-  }
+
+  // Stream NDJSON: heartbeats while ingestion (OCR can take a minute) runs, then a
+  // terminal line. Keeps the connection alive so the browser/Fly proxy don't time
+  // out mid-OCR and the machine stays awake — the "Failed to fetch" fix.
+  const displayPath = `uploads/${path.basename(file.name)}`;
+  return stream(c, async (s) => {
+    const job = ingestFile(tenant.id, tmp, displayPath)
+      .then((result) => ({ ok: true as const, result }))
+      .catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }))
+      .finally(() => {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
+      });
+    let done = false;
+    void job.then(() => (done = true));
+
+    const started = Date.now();
+    while (!done) {
+      await s.write(JSON.stringify({ status: "processing", elapsed_s: Math.round((Date.now() - started) / 1000) }) + "\n");
+      await Promise.race([job, new Promise((r) => setTimeout(r, 3000))]);
+    }
+    const settled = await job;
+    await s.write(
+      (settled.ok
+        ? JSON.stringify({ status: "done", ...settled.result })
+        : JSON.stringify({ status: "error", error: settled.error })) + "\n"
+    );
+  });
 });
 
 // ---------- triage review queue ----------
