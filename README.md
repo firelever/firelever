@@ -83,6 +83,14 @@ Auth: per-tenant bearer keys, SHA-256 at rest, constant-time compare. Every rout
 tenant-scoped; the growth pipeline (leads.db) is not exposed. Nothing sends email —
 approving a triage draft only marks it approved.
 
+## OCR for scanned PDFs
+
+Scanned documents (no text layer) are handled by an OCR fallback
+([ADR-007](docs/adr/ADR-007-ocr.md)): when a PDF's text layer is sparse, pages are
+rasterized with mupdf (WASM, no native deps) and transcribed by Claude vision on
+Haiku 4.5. Text-based PDFs skip this path entirely, so native documents stay fast and
+free. Page cap via `OCR_MAX_PAGES` (default 30), with a logged warning on truncation.
+
 ## Email triage
 
 Slice 4 ([ADR-004](docs/adr/ADR-004-email-triage.md)): inbound email is classified

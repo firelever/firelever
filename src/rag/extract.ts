@@ -19,14 +19,30 @@ export async function extractText(filePath: string): Promise<Extracted> {
     return { text, title: heading?.[1]?.trim() ?? base };
   }
   if (ext === ".pdf") {
+    // Keep the original bytes: pdf-parse (pdfjs) detaches the array it's given,
+    // so OCR needs its own fresh copy.
+    const bytes = fs.readFileSync(filePath);
     const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: new Uint8Array(fs.readFileSync(filePath)) });
+    const parser = new PDFParse({ data: new Uint8Array(bytes) });
+    let text: string;
+    let pages: number;
     try {
       const result = await parser.getText();
-      return { text: result.text, title: base };
+      text = result.text;
+      pages = result.total ?? result.pages?.length ?? 1;
     } finally {
       await parser.destroy();
     }
+    // Scanned PDF: little/no text layer. Fall back to OCR (ADR-007).
+    if (text.trim().length / Math.max(pages, 1) < 100) {
+      const { ocrPdf } = await import("./ocr.js");
+      const ocr = await ocrPdf(new Uint8Array(bytes));
+      if (ocr.text.trim().length > text.trim().length) {
+        console.log(`  OCR fallback: ${ocr.pagesOcrd}/${ocr.pagesTotal} pages transcribed`);
+        return { text: ocr.text, title: base };
+      }
+    }
+    return { text, title: base };
   }
   if (ext === ".docx") {
     const mammoth = await import("mammoth");
