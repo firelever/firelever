@@ -41,18 +41,31 @@ export async function extractText(filePath: string): Promise<Extracted> {
       .map((t, i) => (t.trim().length < PAGE_TEXT_MIN ? i : -1))
       .filter((i) => i >= 0);
 
+    // Pages transcribed from scans get a legibility marker so answers can hedge
+    // on hard-to-read pages instead of asserting OCR noise as fact.
+    const lowConf = new Set<number>();
     if (scanned.length > 0) {
       const { ocrSelectedPages } = await import("./ocr.js");
       const ocr = await ocrSelectedPages(new Uint8Array(bytes), scanned);
-      for (const [i, t] of ocr.byPage) perPage[i] = t;
+      for (const [i, page] of ocr.byPage) {
+        perPage[i] = page.text;
+        if (page.legibility !== "clear") lowConf.add(i);
+      }
       console.log(
-        `  OCR: ${ocr.transcribed}/${scanned.length} scanned pages recovered (of ${perPage.length} total)`
+        `  OCR: ${ocr.transcribed}/${scanned.length} scanned pages recovered ` +
+          `(${lowConf.size} low-confidence) of ${perPage.length} total`
       );
     }
 
     // Label pages so citations can point at a page; drop empty ones.
     const text = perPage
-      .map((t, i) => (t.trim() ? `[page ${i + 1}]\n${t.trim()}` : ""))
+      .map((t, i) => {
+        if (!t.trim()) return "";
+        const tag = lowConf.has(i)
+          ? `[page ${i + 1} — scanned, OCR may contain errors in names/numbers]`
+          : `[page ${i + 1}]`;
+        return `${tag}\n${t.trim()}`;
+      })
       .filter(Boolean)
       .join("\n\n");
     return { text, title: base };

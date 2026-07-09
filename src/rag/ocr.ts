@@ -1,21 +1,39 @@
-// OCR fallback for scanned PDFs (ADR-007): rasterize pages with mupdf (WASM) and
-// transcribe each with Claude vision on Haiku 4.5. Used by extract.ts only when
-// the text layer is too sparse to be a real text PDF.
-import type Anthropic from "@anthropic-ai/sdk";
+// OCR fallback for scanned PDFs (ADR-007, quality upgrade ADR-009): rasterize
+// pages with mupdf (WASM) and transcribe with Claude vision. Each page returns a
+// legibility flag so downstream answers can hedge on hard-to-read scans instead
+// of asserting OCR artifacts as fact.
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { z } from "zod";
 import { client, withDeadline } from "../llm.js";
 
-const OCR_MODEL = "claude-haiku-4-5";
-const DPI = 150;
+// Opus 4.8 has high-resolution vision (up to 2576px long edge) — it can actually
+// use the detail a higher DPI provides, where Haiku would downscale it away.
+// Legal documents live or die on names/numbers, so accuracy beats the small cost.
+const OCR_MODEL = process.env.OCR_MODEL ?? "claude-opus-4-8";
+const DPI = Number(process.env.OCR_DPI ?? 220);
 const MAX_PAGES = Number(process.env.OCR_MAX_PAGES ?? 30);
 
 const TRANSCRIBE =
-  "Transcribe all text in this document page exactly as written, preserving " +
-  "headings, lists, and table structure as plain text. Output only the transcription, " +
-  "no commentary. If the page has no readable text, output nothing.";
+  "Transcribe this scanned document page exactly as written. Preserve headings, " +
+  "lists, and table structure as plain text. Transcribe names, dollar amounts, " +
+  "dates, and reference numbers character for character — do not normalize or guess " +
+  "at them. If a character is genuinely unclear, give your best reading but reflect " +
+  "the uncertainty in the legibility rating. Output only the transcription.";
 
-// Render one PDF page to a PNG buffer at DPI. mupdf holds native (WASM) memory
-// that JS GC won't reclaim, so every object is explicitly destroyed — without
-// this, page pixmaps accumulate and OOM-kill the process on multi-page scans.
+const OcrSchema = z.object({
+  text: z.string().describe("exact transcription; empty string if the page has no readable text"),
+  legibility: z
+    .enum(["clear", "partial", "poor"])
+    .describe(
+      "clear = confident throughout; partial = some words/numbers uncertain; poor = largely illegible"
+    ),
+});
+
+export interface OcrPage {
+  text: string;
+  legibility: "clear" | "partial" | "poor";
+}
+
 function pageToPng(mupdf: any, doc: any, i: number): Buffer {
   const page = doc.loadPage(i);
   const mtx = mupdf.Matrix.scale(DPI / 72, DPI / 72);
@@ -28,12 +46,12 @@ function pageToPng(mupdf: any, doc: any, i: number): Buffer {
   }
 }
 
-async function transcribe(png: Buffer): Promise<string> {
-  const message = await withDeadline("ocr-page", (signal) =>
-    client.messages.create(
+async function transcribe(png: Buffer): Promise<OcrPage> {
+  const response = await withDeadline("ocr-page", (signal) =>
+    client.messages.parse(
       {
         model: OCR_MODEL,
-        max_tokens: 4096,
+        max_tokens: 8000,
         messages: [
           {
             role: "user",
@@ -46,25 +64,21 @@ async function transcribe(png: Buffer): Promise<string> {
             ],
           },
         ],
+        output_config: { format: zodOutputFormat(OcrSchema) },
       },
       { signal }
     )
   );
-  return message.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
+  return response.parsed_output ?? { text: "", legibility: "poor" };
 }
 
 export interface OcrPagesResult {
-  byPage: Map<number, string>; // 0-based page index -> transcribed text
+  byPage: Map<number, OcrPage>; // 0-based page index -> {text, legibility}
   requested: number;
   transcribed: number;
   skippedForCap: number;
 }
 
-// OCR only the given page indices (the scanned pages in a mixed document).
-// Capped at OCR_MAX_PAGES; extra scanned pages are reported, not silently dropped.
 export async function ocrSelectedPages(
   data: Uint8Array,
   pageIndices: number[]
@@ -72,12 +86,12 @@ export async function ocrSelectedPages(
   const mupdf = await import("mupdf");
   const doc = mupdf.Document.openDocument(data, "application/pdf");
   const todo = pageIndices.slice(0, MAX_PAGES);
-  const byPage = new Map<number, string>();
+  const byPage = new Map<number, OcrPage>();
   try {
     for (const i of todo) {
       const png = pageToPng(mupdf, doc, i);
-      const text = (await transcribe(png)).trim();
-      if (text) byPage.set(i, text);
+      const page = await transcribe(png);
+      if (page.text.trim()) byPage.set(i, page);
     }
   } finally {
     doc.destroy?.();
