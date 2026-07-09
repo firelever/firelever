@@ -29,4 +29,5 @@ primary_region = 'iad'
 
 [[vm]]
   size = 'shared-cpu-1x'
-  memory = '1gb'
+  # 2GB: OCR rasterizes PDF pages in memory; 1GB OOM-killed on a 12MB scan.
+  memory = '2gb'
