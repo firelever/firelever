@@ -162,6 +162,13 @@
 
     <section id="tab-inbox" style="display:none">
       <p class="hint" style="margin:0 0 14px">Drafted replies waiting for your call. Nothing is ever sent automatically — approve, then send from your own mailbox.</p>
+      <div class="card" id="cleanupCard" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div><b id="cleanupCount"></b> <span class="hint">newsletters and spam can be archived (moved out of your inbox, never deleted).</span></div>
+          <button class="btn small" id="cleanupBtn">Archive them</button>
+        </div>
+        <div class="flash" id="cleanupFlash"></div>
+      </div>
       <div id="queue"></div>
     </section>
   </div>
@@ -296,8 +303,33 @@ $("uploadBtn").onclick = async () => {
   } finally { $("uploadBtn").disabled = false; }
 };
 
+// ---------- inbox cleanup (archive-only) ----------
+let cleanupIds = [];
+async function loadCleanup() {
+  try {
+    const { items } = await api("/inbox/cleanup");
+    cleanupIds = items.map((i) => i.id);
+    $("cleanupCard").style.display = items.length ? "" : "none";
+    $("cleanupCount").textContent = `${items.length} email${items.length === 1 ? "" : "s"}`;
+  } catch { $("cleanupCard").style.display = "none"; }
+}
+$("cleanupBtn").onclick = async () => {
+  if (!cleanupIds.length) return;
+  $("cleanupBtn").disabled = true;
+  $("cleanupFlash").className = "flash"; $("cleanupFlash").innerHTML = '<span class="spin"></span> Archiving…';
+  try {
+    const r = await api("/inbox/cleanup/apply", { method: "POST", body: JSON.stringify({ ids: cleanupIds }) });
+    $("cleanupFlash").className = "flash ok";
+    $("cleanupFlash").textContent = `Archived ${r.archived} email${r.archived === 1 ? "" : "s"} (moved to All Mail).`;
+    loadCleanup();
+  } catch (e) {
+    $("cleanupFlash").className = "flash err"; $("cleanupFlash").textContent = "Cleanup failed: " + e.message;
+  } finally { $("cleanupBtn").disabled = false; }
+};
+
 // ---------- inbox ----------
 async function loadQueue() {
+  loadCleanup();
   const { queue } = await api("/triage");
   $("inboxCount").style.display = queue.length ? "" : "none";
   $("inboxCount").textContent = queue.length;

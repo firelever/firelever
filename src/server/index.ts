@@ -10,10 +10,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { authenticate, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
+import { classifyIntent, answerInbox } from "../rag/inbox-qa.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
+import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -54,7 +56,11 @@ function limited(bucket: string) {
 app.post("/api/ask", limited("ask"), async (c) => {
   const { question } = await c.req.json<{ question?: string }>();
   if (!question?.trim()) return c.json({ error: "question is required" }, 400);
-  const result = await answer(c.get("tenant").id, question.trim());
+  const tenantId = c.get("tenant").id;
+  const q = question.trim();
+  // Route inbox questions to the inbox; everything else to the document copilot.
+  const intent = await classifyIntent(q);
+  const result = intent === "inbox" ? await answerInbox(tenantId, q) : await answer(tenantId, q);
   return c.json({
     answerable: result.answerable,
     answer: result.answer,
@@ -161,6 +167,20 @@ app.post("/api/triage/:id/verdict", async (c) => {
   if (!row) return c.json({ error: "not found" }, 404);
   updateEmail(id, { status: verdict });
   return c.json({ ok: true, status: verdict });
+});
+
+// ---------- inbox cleanup (archive-only, propose then apply) ----------
+app.get("/api/inbox/cleanup", (c) => {
+  return c.json({ items: previewCleanup(c.get("tenant").id) });
+});
+
+app.post("/api/inbox/cleanup/apply", limited("upload"), async (c) => {
+  const { ids } = await c.req.json<{ ids?: number[] }>();
+  if (!Array.isArray(ids) || ids.some((n) => typeof n !== "number")) {
+    return c.json({ error: "ids must be an array of numbers" }, 400);
+  }
+  const result = await applyCleanup(c.get("tenant").id, ids);
+  return c.json(result);
 });
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
