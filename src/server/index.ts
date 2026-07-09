@@ -166,3 +166,11 @@ app.post("/api/triage/:id/verdict", async (c) => {
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`FireLever Copilot listening on http://localhost:${info.port}`);
 });
+
+// Live inbox watcher: triages new mail the moment it arrives (ADR-011). Starts
+// only when Gmail creds are configured; failures never take down the web server.
+if (process.env.WATCH_INBOX !== "0") {
+  import("../triage/watcher.js")
+    .then(({ startInboxWatcher }) => startInboxWatcher("firelever"))
+    .catch((e) => console.error("[watcher] failed to start:", e));
+}

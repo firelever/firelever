@@ -11,12 +11,12 @@ import { insertEmail, updateEmail } from "./store.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 
-interface Attachment {
+export interface Attachment {
   filename: string;
   content: Buffer;
 }
 
-interface RawEmail {
+export interface RawEmail {
   message_id: string;
   from_addr: string;
   subject: string;
@@ -100,7 +100,7 @@ function loadDemoEmails(): RawEmail[] {
   }));
 }
 
-async function fetchImapUnseen(): Promise<RawEmail[]> {
+export async function fetchImapUnseen(): Promise<RawEmail[]> {
   const { GMAIL_USER, GMAIL_APP_PASSWORD } = await import("../config.js");
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
     throw new Error("IMAP mode needs GMAIL_USER and GMAIL_APP_PASSWORD in .env (see README)");
@@ -146,30 +146,12 @@ async function fetchImapUnseen(): Promise<RawEmail[]> {
   return out;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const flag = (name: string) => {
-    const i = args.indexOf(name);
-    return i === -1 ? undefined : (args[i + 1] ?? true);
-  };
-  const tenantId = (flag("--tenant") as string) ?? "firelever";
-
-  let emails: RawEmail[];
-  if (args.includes("--demo")) {
-    emails = loadDemoEmails();
-  } else if (flag("--dir")) {
-    const dir = flag("--dir") as string;
-    emails = fs
-      .readdirSync(dir)
-      .filter((f) => f.endsWith(".txt") || f.endsWith(".eml"))
-      .map((f) => parseEmailFile(path.join(dir, f)));
-  } else if (args.includes("--imap")) {
-    emails = await fetchImapUnseen();
-  } else {
-    console.error("Usage: npm run triage -- --demo | --dir <path> | --imap  [--tenant <id>]");
-    process.exit(1);
-  }
-
+// Process a batch of emails: dedup-insert, classify, draft, ingest attachments.
+// Shared by the CLI (main) and the live inbox watcher (watcher.ts).
+export async function processEmails(
+  tenantId: string,
+  emails: RawEmail[]
+): Promise<{ processed: number; skipped: number }> {
   let processed = 0;
   let skipped = 0;
   for (const e of emails) {
@@ -218,10 +200,41 @@ async function main() {
       console.error(`  ERROR          ${e.subject}: ${err instanceof Error ? err.message : err}`);
     }
   }
+  return { processed, skipped };
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const flag = (name: string) => {
+    const i = args.indexOf(name);
+    return i === -1 ? undefined : (args[i + 1] ?? true);
+  };
+  const tenantId = (flag("--tenant") as string) ?? "firelever";
+
+  let emails: RawEmail[];
+  if (args.includes("--demo")) {
+    emails = loadDemoEmails();
+  } else if (flag("--dir")) {
+    const dir = flag("--dir") as string;
+    emails = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".txt") || f.endsWith(".eml"))
+      .map((f) => parseEmailFile(path.join(dir, f)));
+  } else if (args.includes("--imap")) {
+    emails = await fetchImapUnseen();
+  } else {
+    console.error("Usage: npm run triage -- --demo | --dir <path> | --imap  [--tenant <id>]");
+    process.exit(1);
+  }
+
+  const { processed, skipped } = await processEmails(tenantId, emails);
   console.log(`\nDone. processed=${processed} already_seen=${skipped}. Next: npm run triage:review`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only run the CLI when invoked directly, not when imported by the watcher.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

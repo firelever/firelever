@@ -203,11 +203,18 @@ $("keySave").onclick = () => { KEY = $("keyInput").value.trim(); localStorage.se
 $("keyInput").addEventListener("keydown", (e) => e.key === "Enter" && $("keySave").click());
 
 // ---------- tabs ----------
+let inboxPoll = null;
 document.querySelectorAll("nav button").forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     ["ask", "docs", "inbox"].forEach((t) => $("tab-" + t).style.display = b.dataset.tab === t ? "" : "none");
+    // While viewing the inbox, poll so drafts from the live watcher appear on their own.
+    clearInterval(inboxPoll);
+    if (b.dataset.tab === "inbox") {
+      loadQueue();
+      inboxPoll = setInterval(loadQueue, 8000);
+    }
   };
 });
 
