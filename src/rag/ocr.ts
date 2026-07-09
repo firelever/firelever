@@ -56,31 +56,37 @@ async function transcribe(png: Buffer): Promise<string> {
     .join("\n");
 }
 
-export interface OcrResult {
-  text: string;
-  pagesOcrd: number;
-  pagesTotal: number;
-  truncated: boolean;
+export interface OcrPagesResult {
+  byPage: Map<number, string>; // 0-based page index -> transcribed text
+  requested: number;
+  transcribed: number;
+  skippedForCap: number;
 }
 
-export async function ocrPdf(data: Uint8Array): Promise<OcrResult> {
+// OCR only the given page indices (the scanned pages in a mixed document).
+// Capped at OCR_MAX_PAGES; extra scanned pages are reported, not silently dropped.
+export async function ocrSelectedPages(
+  data: Uint8Array,
+  pageIndices: number[]
+): Promise<OcrPagesResult> {
   const mupdf = await import("mupdf");
   const doc = mupdf.Document.openDocument(data, "application/pdf");
-  const pagesTotal = doc.countPages();
-  const limit = Math.min(pagesTotal, MAX_PAGES);
-  const parts: string[] = [];
+  const todo = pageIndices.slice(0, MAX_PAGES);
+  const byPage = new Map<number, string>();
   try {
-    for (let i = 0; i < limit; i++) {
+    for (const i of todo) {
       const png = pageToPng(mupdf, doc, i);
       const text = (await transcribe(png)).trim();
-      if (text) parts.push(`[page ${i + 1}]\n${text}`);
+      if (text) byPage.set(i, text);
     }
   } finally {
     doc.destroy?.();
   }
-  const truncated = pagesTotal > limit;
-  if (truncated) {
-    console.warn(`  OCR: transcribed ${limit}/${pagesTotal} pages (OCR_MAX_PAGES=${MAX_PAGES})`);
+  const skippedForCap = pageIndices.length - todo.length;
+  if (skippedForCap > 0) {
+    console.warn(
+      `  OCR: ${todo.length} scanned pages transcribed, ${skippedForCap} skipped (OCR_MAX_PAGES=${MAX_PAGES})`
+    );
   }
-  return { text: parts.join("\n\n"), pagesOcrd: limit, pagesTotal, truncated };
+  return { byPage, requested: pageIndices.length, transcribed: byPage.size, skippedForCap };
 }

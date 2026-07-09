@@ -24,24 +24,37 @@ export async function extractText(filePath: string): Promise<Extracted> {
     const bytes = fs.readFileSync(filePath);
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
-    let text: string;
-    let pages: number;
+    let perPage: string[];
     try {
       const result = await parser.getText();
-      text = result.text;
-      pages = result.total ?? result.pages?.length ?? 1;
+      perPage = (result.pages ?? []).map((p: { text?: string }) => p.text ?? "");
+      if (perPage.length === 0) perPage = [result.text ?? ""];
     } finally {
       await parser.destroy();
     }
-    // Scanned PDF: little/no text layer. Fall back to OCR (ADR-007).
-    if (text.trim().length / Math.max(pages, 1) < 100) {
-      const { ocrPdf } = await import("./ocr.js");
-      const ocr = await ocrPdf(new Uint8Array(bytes));
-      if (ocr.text.trim().length > text.trim().length) {
-        console.log(`  OCR fallback: ${ocr.pagesOcrd}/${ocr.pagesTotal} pages transcribed`);
-        return { text: ocr.text, title: base };
-      }
+
+    // Per-page fallback (ADR-007): OCR only the pages whose text layer is empty
+    // — real contracts are mixed (e-signed text pages + scanned image pages), so
+    // a document-level average would skip the scans that carry the actual terms.
+    const PAGE_TEXT_MIN = 40;
+    const scanned = perPage
+      .map((t, i) => (t.trim().length < PAGE_TEXT_MIN ? i : -1))
+      .filter((i) => i >= 0);
+
+    if (scanned.length > 0) {
+      const { ocrSelectedPages } = await import("./ocr.js");
+      const ocr = await ocrSelectedPages(new Uint8Array(bytes), scanned);
+      for (const [i, t] of ocr.byPage) perPage[i] = t;
+      console.log(
+        `  OCR: ${ocr.transcribed}/${scanned.length} scanned pages recovered (of ${perPage.length} total)`
+      );
     }
+
+    // Label pages so citations can point at a page; drop empty ones.
+    const text = perPage
+      .map((t, i) => (t.trim() ? `[page ${i + 1}]\n${t.trim()}` : ""))
+      .filter(Boolean)
+      .join("\n\n");
     return { text, title: base };
   }
   if (ext === ".docx") {
