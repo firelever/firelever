@@ -33,14 +33,21 @@ afterward.
   robustness is model-dependent, which is one reason the frontier model stays on the
   customer-facing answer path and the human review queue gates every send.
 
+## Hardening applied (2026-07-08, src/server/limits.ts)
+
+- **Per-tenant rate limiting** — fixed-window limiter: 60 asks/min, 30 uploads/min
+  per tenant; 429 + `Retry-After` on breach. Bounds cost/abuse from a leaked key.
+  Verified: 60 asks pass, the 61st is 429'd.
+- **Upload size cap** — 10MB default (`MAX_UPLOAD_BYTES`), 413 on breach, checked
+  before the file is read into ingestion. Verified: oversized upload returns 413.
+
 ## Residual risks (accepted for pilot, tracked)
 
-- **No rate limiting / spend cap** on `/api/ask` — a compromised key could run up API
-  cost. Add a per-tenant request cap before onboarding a second paying tenant.
-- **No upload size limit** — a huge file would block the request thread during
-  in-request ingestion. Cap upload size and move ingestion to a queue at volume
-  (already flagged in ADR-005).
+- **In-memory limiter** — resets on restart and isn't shared across machines. Fine
+  for the single-machine deploy (ADR-005); move to Redis if the app scales out.
+- **Ingestion still runs in-request** — a valid but large document ties up the
+  request; move to a queue at volume (flagged in ADR-005).
 - **Keys don't expire or rotate.** Acceptable for a handful of design partners;
   revisit if the tenant count grows.
-- These are pilot-scale accepts, not fixes. Re-run this pass after adding the
-  MCP-over-HTTP surface (slice 5b) since it's a new authenticated entry point.
+- Re-run this pass after adding the MCP-over-HTTP surface, since it's a new
+  authenticated entry point.
