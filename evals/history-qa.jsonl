@@ -1,1 +1,2 @@
 {"at":"2026-07-08T14:31:33.356Z","prompt_version":"qa-v1","refusal_accuracy":1,"wrongly_refused":1,"faithfulness":1,"correctness":0.9333333333333333,"citation_accuracy":1,"answerable_n":16,"unanswerable_n":8}
+{"at":"2026-07-09T01:19:32.183Z","prompt_version":"qa-v2-adaptive","refusal_accuracy":1,"wrongly_refused":0,"faithfulness":1,"correctness":0.9375,"citation_accuracy":1,"answerable_n":16,"unanswerable_n":8}
