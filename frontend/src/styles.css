@@ -56,7 +56,7 @@ body {
 }
 
 /* ---- center column ---- */
-.center { display: flex; flex-direction: column; min-width: 0; }
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 26px; flex: none;
@@ -93,7 +93,12 @@ body {
 
 .window-stack { position: absolute; left: 50%; top: 62%; transform: translate(-50%, -50%); }
 .card {
-  position: absolute; width: 512px; min-height: 372px; left: -256px; top: -186px;
+  /* Height is bounded so a long answer scrolls inside the card instead of
+     overflowing the stage. The calc keeps the card clear of the prompt bar
+     below and the orb above across laptop viewport heights. */
+  position: absolute; width: 512px; min-height: 372px; max-height: min(540px, calc(38vh + 88px));
+  left: -256px; top: -186px;
+  display: flex; flex-direction: column;
   background: linear-gradient(180deg, rgba(var(--s1), 0.96), rgba(var(--s4), 0.96));
   border: 1px solid rgba(var(--lineRGB), 0.1); border-radius: 20px;
   padding: 20px 22px;
@@ -101,7 +106,14 @@ body {
   transition: transform .7s cubic-bezier(.2,.85,.25,1), opacity .55s, filter .55s;
 }
 .card.focused { border-color: rgba(var(--accRGB), 0.28); }
-.card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex: none; }
+/* Scrollable body: header stays pinned, long answers scroll within the card. */
+.card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.card:not(.focused) .card-body { overflow: hidden; }
+.card-body::-webkit-scrollbar { width: 8px; }
+.card-body::-webkit-scrollbar-thumb { background: rgba(var(--lineRGB), 0.22); border-radius: 8px; }
+.card-body::-webkit-scrollbar-thumb:hover { background: rgba(var(--lineRGB), 0.34); }
+.card-body { scrollbar-width: thin; scrollbar-color: rgba(var(--lineRGB), 0.22) transparent; }
 .card-chip { width: 26px; height: 26px; border-radius: 8px; background: rgba(var(--accRGB), 0.14); display: flex; align-items: center; justify-content: center; color: var(--acc); }
 .card-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--lab); }
 .card-meta { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--mut2); }
@@ -130,11 +142,11 @@ body {
 .send { width: 44px; height: 44px; border-radius: 13px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--onAcc); background: linear-gradient(135deg, var(--acc), var(--acc2)); box-shadow: 0 0 20px rgba(var(--accRGB), 0.4); }
 
 /* ---- right panel ---- */
-.panel { display: flex; flex-direction: column; background: rgba(var(--s5), 0.4); border-left: 1px solid rgba(var(--lineRGB), 0.09); min-width: 0; }
+.panel { display: flex; flex-direction: column; background: rgba(var(--s5), 0.4); border-left: 1px solid rgba(var(--lineRGB), 0.09); min-width: 0; min-height: 0; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 12px; }
 .panel-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--lab); }
 .live { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--okD); padding: 2px 7px; border-radius: 6px; border: 1px solid rgba(48,209,88,0.34); }
-.messages { flex: 1; overflow-y: auto; padding: 4px 16px; display: flex; flex-direction: column; gap: 10px; }
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 86%; font-size: 13px; line-height: 1.5; padding: 10px 13px; }
 .msg.user { align-self: flex-end; background: rgba(var(--accRGB), 0.14); color: var(--tx); border-radius: 14px 14px 4px 14px; }
 .msg.bot { align-self: flex-start; background: rgba(var(--s2), 0.9); color: var(--tx2); border-radius: 14px 14px 14px 4px; }

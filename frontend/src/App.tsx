@@ -343,7 +343,7 @@ export function App() {
                   <span className="card-label">{w.label}</span>
                   <span className="card-meta">{w.tier === "preview" ? "PREVIEW" : w.id === "inbox" && inboxCount ? `${inboxCount} AWAITING` : w.meta ?? ""}</span>
                 </div>
-                {renderWindow(w.id)}
+                <div className="card-body">{renderWindow(w.id)}</div>
               </div>
             ))}
           </div>
