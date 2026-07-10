@@ -14,6 +14,10 @@ COPY src ./src
 COPY web ./web
 COPY scripts ./scripts
 
+# Build the Levi (React/Vite) frontend into /app/web-dist, served by the server.
+COPY frontend ./frontend
+RUN cd frontend && npm ci && npm run build
+
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080

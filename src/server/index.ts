@@ -19,15 +19,37 @@ import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const UI_PATH = path.join(here, "..", "..", "web", "index.html");
+const ROOT = path.join(here, "..", "..");
+const CLASSIC_UI = path.join(ROOT, "web", "index.html");
+const LEVI_DIR = path.join(ROOT, "web-dist"); // built Levi frontend (Vite)
 const PORT = Number(process.env.PORT ?? 8787);
 
 type Env = { Variables: { tenant: Tenant } };
 const app = new Hono<Env>();
 
 // ---------- UI + health (no auth) ----------
-app.get("/", (c) => c.html(fs.readFileSync(UI_PATH, "utf8")));
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// Levi built assets (JS/CSS/images) — served if the build exists.
+const leviIndex = fs.existsSync(path.join(LEVI_DIR, "index.html"));
+if (leviIndex) {
+  app.get("/assets/*", (c) => {
+    const file = path.join(LEVI_DIR, c.req.path.replace(/^\//, ""));
+    if (!file.startsWith(LEVI_DIR) || !fs.existsSync(file)) return c.notFound();
+    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "application/octet-stream";
+    c.header("Content-Type", type);
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+    return c.body(fs.readFileSync(file));
+  });
+}
+
+// The classic single-file UI stays reachable at /classic.
+app.get("/classic", (c) => c.html(fs.readFileSync(CLASSIC_UI, "utf8")));
+
+// Root: the Levi dashboard when built, else the classic UI.
+app.get("/", (c) =>
+  leviIndex ? c.html(fs.readFileSync(path.join(LEVI_DIR, "index.html"), "utf8")) : c.html(fs.readFileSync(CLASSIC_UI, "utf8"))
+);
 
 // ---------- auth gate for everything else under /api ----------
 app.use("/api/*", async (c, next) => {
