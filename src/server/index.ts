@@ -18,6 +18,7 @@ import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { proposeRedlines } from "../rag/redlines.js";
+import { voiceConfigured, transcribe, synthesize } from "./voice.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -236,6 +237,40 @@ app.post("/api/redlines", limited("ask"), async (c) => {
   const result = await proposeRedlines(c.get("tenant").id);
   if (!result) return c.json({ error: "no contract found in your documents" }, 404);
   return c.json(result);
+});
+
+// ---------- voice: speech in, grounded answer, speech out ----------
+app.get("/api/voice/status", (c) => c.json({ configured: voiceConfigured() }));
+
+app.post("/api/voice", limited("ask"), async (c) => {
+  if (!voiceConfigured()) return c.json({ error: "voice not configured" }, 503);
+  const tenantId = c.get("tenant").id;
+  const ct = c.req.header("content-type") || "audio/webm";
+  const audio = await c.req.arrayBuffer();
+  const transcript = await transcribe(audio, ct);
+  if (!transcript) return c.json({ transcript: "", answer: "", answerable: false, citations: [], audio: null });
+
+  const intent = await classifyIntent(transcript);
+  const result = intent === "inbox" ? await answerInbox(tenantId, transcript) : await answer(tenantId, transcript);
+  const spoken = result.answerable ? result.answer : "I can't find this in your documents.";
+  let audioB64: string | null = null;
+  try {
+    audioB64 = (await synthesize(spoken)).toString("base64");
+  } catch (e) {
+    console.error("[voice] tts failed:", e instanceof Error ? e.message : e);
+  }
+  return c.json({
+    transcript,
+    answerable: result.answerable,
+    answer: result.answer,
+    citations: result.answerable && "sources" in result
+      ? (result.cited_sources ?? []).map((n: number) => {
+          const s = (result.sources as any[])[n - 1];
+          return s ? { n, document: s.document_path, heading: s.heading } : null;
+        }).filter(Boolean)
+      : [],
+    audio: audioB64,
+  });
 });
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {

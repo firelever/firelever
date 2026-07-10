@@ -5,6 +5,7 @@ import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
+import { recordUtterance, playAudio, RecordHandle } from "./lib/voice";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -20,7 +21,6 @@ export function App() {
   const active = order[0];
   const [nav, setNav] = useState("chat");
   const [auto, setAuto] = useState(false);
-  const [mic, setMic] = useState(false);
   const [now, setNow] = useState("");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,12 +34,45 @@ export function App() {
   const [redlines, setRedlines] = useState<RedlineResult | null>(null);
   const [redlinesBusy, setRedlinesBusy] = useState(false);
   const [mode, setMode] = useState<OrbMode>("muted");
-  const [level] = useState(0);
+  const [level, setLevel] = useState(0);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [voiceReady, setVoiceReady] = useState(false);
+  const recHandle = useRef<RecordHandle | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { api.voiceStatus().then((s) => setVoiceReady(s.configured)).catch(() => {}); }, []);
+
+  // Tap mic to speak: record one utterance → transcribe+answer+speak, orb follows.
+  async function startVoice() {
+    if (voiceOn) { recHandle.current?.stop(); return; }
+    setVoiceOn(true);
+    setMode("hearing");
+    const blob = await recordUtterance(setLevel, (h) => (recHandle.current = h));
+    recHandle.current = null;
+    setLevel(0);
+    if (!blob) { setVoiceOn(false); setMode("muted"); return; }
+    setMode("thinking");
+    setBusy(true);
+    promote("answer");
+    try {
+      const r = await api.voice(blob);
+      if (r.transcript) setMessages((m) => [...m, { role: "user", text: r.transcript }]);
+      setLastQuestion(r.transcript);
+      setLiveAnswer({ answerable: r.answerable, answer: r.answer, citations: r.citations.map((c) => ({ ...c, excerpt: "" })) });
+      const cite = r.citations[0];
+      setMessages((m) => [...m, { role: "bot", text: r.answerable ? r.answer : "I can't find this in your documents.", cite: cite ? cite.document.replace(/^uploads\//, "") : undefined }]);
+      if (r.audio) { setMode("responding"); playAudio(r.audio, () => { setVoiceOn(false); setMode("muted"); }); }
+      else { setVoiceOn(false); setMode("muted"); }
+    } catch (e) {
+      setMessages((m) => [...m, { role: "bot", text: "Voice error: " + (e instanceof Error ? e.message : e) }]);
+      setVoiceOn(false); setMode("muted");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => applyTheme(theme), [theme]);
-  useEffect(() => { setMode((m) => (busy ? m : mic ? "listening" : "muted")); }, [mic, busy]);
   useEffect(() => {
     const t = setInterval(() => setNow(new Date().toTimeString().slice(0, 8)), 1000);
     return () => clearInterval(t);
@@ -103,10 +136,10 @@ export function App() {
         ...m,
         { role: "bot", text: r.answerable ? r.answer : "I can't find this in your documents. Try uploading whatever covers it, then ask again.", cite: cite ? `${cite.document.replace(/^uploads\//, "")}${cite.heading ? " · " + cite.heading : ""}` : undefined },
       ]);
-      setTimeout(() => setMode(mic ? "listening" : "muted"), 2200);
+      setTimeout(() => setMode("muted"), 2200);
     } catch (e) {
       setMessages((m) => [...m, { role: "bot", text: "Error: " + (e instanceof Error ? e.message : e) }]);
-      setMode(mic ? "listening" : "muted");
+      setMode("muted");
     } finally {
       setBusy(false);
     }
@@ -316,7 +349,7 @@ export function App() {
             <span style={{ color: "var(--acc)" }}><Icon.sparkle size={18} /></span>
             <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitAsk(input)} placeholder='Ask Levi anything — or say "Hey Levi"…' />
             <span className="kbd">⌘K</span>
-            <span className={"mic" + (mic ? " on" : "")} onClick={() => setMic((m) => !m)}><Icon.mic size={18} /></span>
+            {voiceReady && <span className={"mic" + (voiceOn ? " on" : "")} onClick={startVoice} title="Tap to speak"><Icon.mic size={18} /></span>}
             <span className="send" onClick={() => submitAsk(input)}>{busy ? <span className="spin" style={{ borderColor: "rgba(0,0,0,0.25)", borderTopColor: "var(--onAcc)" }} /> : <Icon.send size={18} />}</span>
           </div>
         </div>

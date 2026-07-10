@@ -42,7 +42,19 @@ export const api = {
     req<{ ok: boolean }>(`/workspace/item/${id}`, { method: "POST", body: JSON.stringify(fields) }),
   delItem: (id: number) => req<{ ok: boolean }>(`/workspace/item/${id}`, { method: "DELETE" }),
   redlines: () => req<RedlineResult>("/redlines", { method: "POST" }),
+  voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
+  voice: async (blob: Blob): Promise<VoiceResult> => {
+    const res = await fetch("/api/voice", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getKey(), "Content-Type": blob.type || "audio/webm" },
+      body: blob,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    return res.json();
+  },
 };
+
+export interface VoiceResult { transcript: string; answerable: boolean; answer: string; citations: { n: number; document: string; heading: string | null }[]; audio: string | null }
 
 export interface WsItem { id: number; kind: string; title: string; body: string | null; done: number; at: string | null }
 export interface Redline { clause: string; concern: string; old_text: string; suggested_text: string }
