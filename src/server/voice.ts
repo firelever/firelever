@@ -4,8 +4,9 @@
 
 const DEEPGRAM_KEY = () => process.env.DEEPGRAM_API_KEY ?? "";
 const ELEVEN_KEY = () => process.env.ELEVENLABS_API_KEY ?? "";
-// Default voice: Rachel (a stable public ElevenLabs voice). Override with env.
-const ELEVEN_VOICE = () => process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
+// Default voice: Sarah (premade, usable on free tier — mature, reassuring).
+// Override with ELEVENLABS_VOICE_ID.
+const ELEVEN_VOICE = () => process.env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL";
 const ELEVEN_MODEL = () => process.env.ELEVENLABS_MODEL ?? "eleven_turbo_v2_5";
 
 export function voiceConfigured(): boolean {
