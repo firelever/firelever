@@ -4,9 +4,9 @@
 
 const DEEPGRAM_KEY = () => process.env.DEEPGRAM_API_KEY ?? "";
 const ELEVEN_KEY = () => process.env.ELEVENLABS_API_KEY ?? "";
-// Default voice: George (premade, usable on free tier — warm, captivating).
+// Default voice: Liam (premade, usable on free tier — steady, even narrator).
 // Override with ELEVENLABS_VOICE_ID.
-const ELEVEN_VOICE = () => process.env.ELEVENLABS_VOICE_ID ?? "JBFqnCBsd6RMkjVDRZzb";
+const ELEVEN_VOICE = () => process.env.ELEVENLABS_VOICE_ID ?? "TX3LPaxmHKxFdv7VOQHJ";
 const ELEVEN_MODEL = () => process.env.ELEVENLABS_MODEL ?? "eleven_turbo_v2_5";
 
 export function voiceConfigured(): boolean {
