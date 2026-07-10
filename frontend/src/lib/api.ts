@@ -35,4 +35,15 @@ export const api = {
     req<{ queue: { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }[] }>("/triage"),
   verdict: (id: number, verdict: "approved" | "rejected" | "ignored") =>
     req<{ ok: boolean }>(`/triage/${id}/verdict`, { method: "POST", body: JSON.stringify({ verdict }) }),
+  workspace: (kind: "task" | "event" | "note") => req<{ items: WsItem[] }>(`/workspace/${kind}`),
+  addItem: (kind: "task" | "event" | "note", title: string, body?: string, at?: string) =>
+    req<WsItem>(`/workspace/${kind}`, { method: "POST", body: JSON.stringify({ title, body, at }) }),
+  setItem: (id: number, fields: Partial<Pick<WsItem, "title" | "body" | "done" | "at">>) =>
+    req<{ ok: boolean }>(`/workspace/item/${id}`, { method: "POST", body: JSON.stringify(fields) }),
+  delItem: (id: number) => req<{ ok: boolean }>(`/workspace/item/${id}`, { method: "DELETE" }),
+  redlines: () => req<RedlineResult>("/redlines", { method: "POST" }),
 };
+
+export interface WsItem { id: number; kind: string; title: string; body: string | null; done: number; at: string | null }
+export interface Redline { clause: string; concern: string; old_text: string; suggested_text: string }
+export interface RedlineResult { document: string; redlines: Redline[] }

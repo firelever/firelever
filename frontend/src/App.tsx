@@ -1,10 +1,10 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { applyTheme, THEME_ORDER, THEMES, ThemeName } from "./theme";
 import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -28,6 +28,11 @@ export function App() {
   const [liveAnswer, setLiveAnswer] = useState<AskResult | null>(null);
   const [lastQuestion, setLastQuestion] = useState("");
   const [queue, setQueue] = useState<Draft[]>([]);
+  const [tasks, setTasks] = useState<WsItem[]>([]);
+  const [events, setEvents] = useState<WsItem[]>([]);
+  const [notes, setNotes] = useState<WsItem[]>([]);
+  const [redlines, setRedlines] = useState<RedlineResult | null>(null);
+  const [redlinesBusy, setRedlinesBusy] = useState(false);
   const [mode, setMode] = useState<OrbMode>("muted");
   const [level] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -59,6 +64,25 @@ export function App() {
   };
 
   const loadTriage = () => api.triage().then((r) => setQueue(r.queue)).catch(() => {});
+  const loadWorkspace = () => {
+    api.workspace("task").then((r) => setTasks(r.items)).catch(() => {});
+    api.workspace("event").then((r) => setEvents(r.items)).catch(() => {});
+    api.workspace("note").then((r) => setNotes(r.items)).catch(() => {});
+  };
+  useEffect(() => { if (authed) loadWorkspace(); }, [authed]);
+
+  const toggleTask = async (t: WsItem) => { await api.setItem(t.id, { done: t.done ? 0 : 1 }).catch(() => {}); loadWorkspace(); };
+  const addItem = async (kind: "task" | "event" | "note", title: string, at?: string) => {
+    if (!title.trim()) return;
+    await api.addItem(kind, title.trim(), undefined, at).catch(() => {});
+    loadWorkspace();
+  };
+  const runRedlines = async () => {
+    setRedlinesBusy(true);
+    try { setRedlines(await api.redlines()); }
+    catch (e) { setRedlines({ document: "", redlines: [], ...(e instanceof Error ? { error: e.message } : {}) } as RedlineResult); }
+    finally { setRedlinesBusy(false); }
+  };
 
   const promote = (id: string) => setOrder((o) => [id, ...o.filter((x) => x !== id)]);
 
@@ -145,9 +169,78 @@ export function App() {
         </div>
       );
     }
+    if (id === "tasks") {
+      const left = tasks.filter((t) => !t.done).length;
+      return (
+        <div>
+          {tasks.length === 0 && <div style={{ color: "var(--mut2)", fontSize: 13, marginBottom: 10 }}>No tasks yet. Add one below.</div>}
+          {tasks.map((t) => (
+            <div key={t.id} onClick={() => toggleTask(t)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 2px", cursor: "pointer" }}>
+              <span style={{ width: 19, height: 19, borderRadius: 6, flex: "none", display: "flex", alignItems: "center", justifyContent: "center", border: `1.5px solid ${t.done ? "var(--acc)" : "rgba(var(--lineRGB),0.3)"}`, background: t.done ? "rgba(var(--accRGB),0.15)" : "transparent" }}>
+                {t.done ? <Icon.check size={11} /> : null}
+              </span>
+              <span style={{ fontSize: 14, textDecoration: t.done ? "line-through" : "none", color: t.done ? "var(--mut2)" : "var(--tx)" }}>{t.title}</span>
+            </div>
+          ))}
+          <input onKeyDown={(e) => e.key === "Enter" && addItem("task", (e.target as HTMLInputElement).value)} placeholder="Add a task…" style={addInput} />
+          {tasks.length > 0 && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 8 }}>{left} LEFT</div>}
+        </div>
+      );
+    }
+    if (id === "schedule") {
+      return (
+        <div>
+          {events.length === 0 && <div style={{ color: "var(--mut2)", fontSize: 13, marginBottom: 10 }}>No events. Add one as "9:30 Standup".</div>}
+          {events.map((ev) => (
+            <div key={ev.id} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "8px 0", borderLeft: "2px solid var(--acc)", paddingLeft: 12, marginBottom: 6 }}>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accM)", width: 50 }}>{ev.at ?? "—"}</span>
+              <span style={{ fontSize: 15 }}>{ev.title}</span>
+            </div>
+          ))}
+          <input onKeyDown={(e) => { const v = (e.target as HTMLInputElement).value; if (e.key === "Enter" && v.trim()) { const m = v.match(/^(\d{1,2}:\d{2})\s+(.+)/); addItem("event", m ? m[2] : v, m ? m[1] : undefined); } }} placeholder='Add "9:30 Standup"…' style={addInput} />
+        </div>
+      );
+    }
+    if (id === "notes") {
+      return (
+        <div>
+          {notes.length === 0 && <div style={{ color: "var(--mut2)", fontSize: 13, marginBottom: 10 }}>No notes yet.</div>}
+          {notes.map((n) => (
+            <div key={n.id} style={{ fontSize: 14, padding: "7px 0", borderBottom: "1px dashed rgba(var(--lineRGB),0.1)" }}>{n.title}</div>
+          ))}
+          <input onKeyDown={(e) => e.key === "Enter" && addItem("note", (e.target as HTMLInputElement).value)} placeholder="Jot a note…" style={addInput} />
+        </div>
+      );
+    }
+    if (id === "contract") {
+      if (redlinesBusy) return <div style={{ color: "var(--mut2)", display: "flex", gap: 10, alignItems: "center", paddingTop: 8 }}><span className="spin" /> Reviewing your contract…</div>;
+      if (!redlines) return (
+        <div>
+          <div style={{ color: "var(--mut2)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>Levi reviews the most recent contract in your documents and proposes clause-level redlines.</div>
+          <div onClick={runRedlines} style={{ display: "inline-block", padding: "9px 16px", borderRadius: 11, cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, background: "linear-gradient(135deg,var(--acc),var(--acc2))", color: "var(--onAcc)" }}>RUN REDLINE REVIEW</div>
+        </div>
+      );
+      if ((redlines as any).error) return <div style={{ color: "var(--mut)", fontSize: 13 }}>{(redlines as any).error}</div>;
+      return (
+        <div>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginBottom: 10 }}>{redlines.document.replace(/^uploads\//, "")} · {redlines.redlines.length} REDLINE{redlines.redlines.length === 1 ? "" : "S"}</div>
+          <div style={{ maxHeight: 250, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+            {redlines.redlines.map((r, i) => (
+              <div key={i} style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(var(--s5),0.5)" }}>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--accM)", marginBottom: 5 }}>{r.clause}</div>
+                <div style={{ fontSize: 12.5, color: "var(--mut)", marginBottom: 6 }}>{r.concern}</div>
+                <div style={{ fontSize: 12.5, color: "var(--bad)", textDecoration: "line-through", marginBottom: 3 }}>{r.old_text.slice(0, 140)}</div>
+                <div style={{ fontSize: 12.5, color: "var(--ok)" }}>{r.suggested_text.slice(0, 160)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
     return windowContent(id);
   }
 
+  const addInput: CSSProperties = { width: "100%", marginTop: 10, padding: "8px 11px", borderRadius: 8, background: "rgba(var(--s5),0.5)", border: "1px solid rgba(var(--lineRGB),0.12)", color: "var(--tx)", fontFamily: "var(--sans)", fontSize: 13, outline: "none" };
   const inboxCount = queue.length;
 
   if (authed === false) {

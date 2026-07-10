@@ -16,6 +16,8 @@ import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
+import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
+import { proposeRedlines } from "../rag/redlines.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -202,6 +204,37 @@ app.post("/api/inbox/cleanup/apply", limited("upload"), async (c) => {
     return c.json({ error: "ids must be an array of numbers" }, 400);
   }
   const result = await applyCleanup(c.get("tenant").id, ids);
+  return c.json(result);
+});
+
+// ---------- workspace: tasks / schedule / notes ----------
+app.get("/api/workspace/:kind", (c) => {
+  const kind = c.req.param("kind");
+  if (!["task", "event", "note"].includes(kind)) return c.json({ error: "bad kind" }, 400);
+  return c.json({ items: listItems(c.get("tenant").id, kind) });
+});
+app.post("/api/workspace/:kind", async (c) => {
+  const kind = c.req.param("kind");
+  if (!["task", "event", "note"].includes(kind)) return c.json({ error: "bad kind" }, 400);
+  const { title, body, at } = await c.req.json<{ title?: string; body?: string; at?: string }>();
+  if (!title?.trim()) return c.json({ error: "title required" }, 400);
+  return c.json(createItem(c.get("tenant").id, kind, title.trim(), body, at));
+});
+app.post("/api/workspace/item/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const fields = await c.req.json<{ title?: string; body?: string; done?: number; at?: string }>();
+  const ok = updateItem(c.get("tenant").id, id, fields);
+  return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+});
+app.delete("/api/workspace/item/:id", (c) => {
+  const ok = deleteItem(c.get("tenant").id, Number(c.req.param("id")));
+  return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+});
+
+// ---------- contract redlines ----------
+app.post("/api/redlines", limited("ask"), async (c) => {
+  const result = await proposeRedlines(c.get("tenant").id);
+  if (!result) return c.json({ error: "no contract found in your documents" }, 404);
   return c.json(result);
 });
 
