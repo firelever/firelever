@@ -12,7 +12,7 @@ import { randomUUID, timingSafeEqual } from "crypto";
 import { authenticate, listTenants, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
 import { classifyIntent, answerInbox, answerChat } from "../rag/inbox-qa.js";
-import { streamVoiceReply } from "../rag/answer-voice.js";
+import { streamVoiceReply, warmVoice } from "../rag/answer-voice.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
@@ -423,6 +423,8 @@ app.post("/v1/chat/completions", async (c) => {
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`FireLever Copilot listening on http://localhost:${info.port}`);
+  // Preload the embedding model so the first voice document query is fast.
+  void warmVoice();
 });
 
 // Live inbox watcher: triages new mail the moment it arrives (ADR-011). Starts
