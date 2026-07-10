@@ -88,9 +88,9 @@ export async function streamVoiceReply(
     // One retrieval, one answer call. A wide candidate set (top 24) keeps recall
     // high so the answer passage is present; short previews keep Haiku's input
     // small and fast, and it picks the relevant sources itself.
-    const hits = await search(tenantId, question, 24, getEmbedder(), "hybrid").catch(() => []);
+    const hits = await search(tenantId, question, 40, getEmbedder(), "hybrid").catch(() => []);
     const block = hits
-      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1000)}`)
+      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 800)}`)
       .join("\n\n");
     system =
       "You are Levi, answering out loud from the user's documents. Use ONLY the numbered sources; " +
