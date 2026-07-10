@@ -8,8 +8,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { randomUUID } from "crypto";
-import { authenticate, Tenant } from "./auth.js";
+import { randomUUID, timingSafeEqual } from "crypto";
+import { authenticate, listTenants, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
 import { classifyIntent, answerInbox, answerChat } from "../rag/inbox-qa.js";
 import { ingestFile } from "../rag/ingest-file.js";
@@ -303,8 +303,39 @@ app.post("/api/voice", limited("ask"), async (c) => {
 // inbox (Claude brain), and stream it back in OpenAI SSE format so ElevenLabs
 // can start speaking as words arrive. Auth reuses the tenant bearer key — set
 // the agent's Custom-LLM API key to the tenant's flv_ key.
+// The tenant the voice agent speaks for. ElevenLabs authenticates with the
+// shared Convai secret (not a per-tenant flv_ key); bind to CONVAI_TENANT_ID
+// when set, otherwise the tenant that owns the most documents.
+function convaiTenant(): Tenant | null {
+  const tenants = listTenants();
+  const want = process.env.CONVAI_TENANT_ID;
+  if (want) {
+    const t = tenants.find((x) => x.id === want);
+    return t ? { id: t.id, name: t.name } : null;
+  }
+  const row = db
+    .prepare(`SELECT tenant_id, COUNT(*) c FROM documents GROUP BY tenant_id ORDER BY c DESC LIMIT 1`)
+    .get() as { tenant_id: string } | undefined;
+  const t = row && tenants.find((x) => x.id === row.tenant_id);
+  return t ? { id: t.id, name: t.name } : null;
+}
+
+function sharedSecretOk(bearer: string | undefined): boolean {
+  const secret = process.env.CONVAI_SHARED_SECRET;
+  if (!secret || !bearer) return false;
+  const a = Buffer.from(bearer);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 app.post("/v1/chat/completions", async (c) => {
-  const tenant = authenticate(c.req.header("authorization"));
+  const authHeader = c.req.header("authorization");
+  // A tenant's own flv_ key works; so does the shared Convai secret, which
+  // binds to the documents tenant so the voice agent needs no personal key.
+  let tenant = authenticate(authHeader);
+  if (!tenant && sharedSecretOk(authHeader?.match(/^Bearer\s+(.+)$/)?.[1]?.trim())) {
+    tenant = convaiTenant();
+  }
   if (!tenant) return c.json({ error: "invalid or missing API key" }, 401);
 
   const body = await c.req.json<{ messages?: { role: string; content: unknown }[]; stream?: boolean; model?: string }>();
