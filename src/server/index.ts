@@ -8,6 +8,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { randomUUID } from "crypto";
 import { authenticate, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
 import { classifyIntent, answerInbox, answerChat } from "../rag/inbox-qa.js";
@@ -292,6 +293,78 @@ app.post("/api/voice", limited("ask"), async (c) => {
         }).filter(Boolean)
       : [],
     audio: audioB64,
+  });
+});
+
+// ---------- OpenAI-compatible endpoint for ElevenLabs Conversational AI ----------
+// ElevenLabs Agents own the voice loop (streaming STT, turn-taking, barge-in,
+// TTS). They call this as the "Custom LLM": the conversation arrives as an
+// OpenAI chat/completions request, we ground the reply in the tenant's docs /
+// inbox (Claude brain), and stream it back in OpenAI SSE format so ElevenLabs
+// can start speaking as words arrive. Auth reuses the tenant bearer key — set
+// the agent's Custom-LLM API key to the tenant's flv_ key.
+app.post("/v1/chat/completions", async (c) => {
+  const tenant = authenticate(c.req.header("authorization"));
+  if (!tenant) return c.json({ error: "invalid or missing API key" }, 401);
+
+  const body = await c.req.json<{ messages?: { role: string; content: unknown }[]; stream?: boolean; model?: string }>();
+  const messages = body.messages ?? [];
+  const wantStream = body.stream !== false; // ElevenLabs streams by default
+  const model = body.model || "firelever-rag";
+
+  const textOf = (content: unknown): string =>
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((p) => (p && typeof p === "object" && "text" in p ? String((p as any).text ?? "") : "")).join(" ")
+        : "";
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  const question = textOf(lastUser?.content).trim();
+
+  // Ground the reply through the same intent router the text UI uses.
+  let text: string;
+  if (!question) {
+    text = "I'm here — ask me about your documents, your inbox, or a contract.";
+  } else {
+    const intent = await classifyIntent(question);
+    const result =
+      intent === "chat"
+        ? await answerChat(question)
+        : intent === "inbox"
+          ? await answerInbox(tenant.id, question)
+          : await answer(tenant.id, question);
+    text = (result.answerable ? result.answer : "I can't find that in your documents.").replace(/\[\d+\]/g, "").trim();
+  }
+
+  const id = "chatcmpl-" + randomUUID();
+  const created = Math.floor(Date.now() / 1000);
+
+  if (!wantStream) {
+    return c.json({
+      id,
+      object: "chat.completion",
+      created,
+      model,
+      choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    });
+  }
+
+  // Stream the grounded answer as OpenAI SSE, chunked by word so ElevenLabs
+  // begins synthesizing the first words immediately instead of waiting.
+  c.header("Content-Type", "text/event-stream");
+  c.header("Cache-Control", "no-cache");
+  c.header("Connection", "keep-alive");
+  return stream(c, async (s) => {
+    const frame = (delta: Record<string, unknown>, finish: string | null = null) =>
+      "data: " +
+      JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finish }] }) +
+      "\n\n";
+    await s.write(frame({ role: "assistant" }));
+    for (const word of text.split(/(\s+)/)) {
+      if (word) await s.write(frame({ content: word }));
+    }
+    await s.write(frame({}, "stop"));
+    await s.write("data: [DONE]\n\n");
   });
 });
 
