@@ -188,8 +188,9 @@ export function App() {
   const rankStyle = useMemo(() => (id: string) => {
     const rank = order.indexOf(id);
     if (rank === 0) return { transform: "translateZ(0)", opacity: 1, filter: "none", zIndex: 20 };
-    if (rank <= 2) return { transform: `translate(0, ${rank * 60}px) translateZ(-${rank * 40}px)`, opacity: 0.6 - rank * 0.12, filter: `blur(${0.4 + rank}px)`, zIndex: 20 - rank };
-    if (rank <= 4) return { transform: `translate(0, ${120 + rank * 12}px) translateZ(-${140 * rank}px)`, opacity: 0.16, filter: `blur(${0.4 + rank}px)`, zIndex: 20 - rank };
+    // Non-focused windows sit faintly behind as a subtle depth hint, not readable
+    // cards trailing below the (now content-sized) focused card.
+    if (rank <= 2) return { transform: `translate(0, ${rank * 34}px) translateZ(-${rank * 48}px)`, opacity: 0.18 - rank * 0.07, filter: `blur(${1.5 + rank * 1.5}px)`, zIndex: 20 - rank };
     return { opacity: 0, pointerEvents: "none" as const };
   }, [order]);
 
