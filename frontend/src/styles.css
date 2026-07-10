@@ -91,13 +91,13 @@ body {
 .orb-status { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--mut); display: flex; align-items: center; gap: 7px; }
 .orb-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); }
 
-.window-stack { position: absolute; left: 50%; top: 62%; transform: translate(-50%, -50%); }
+.window-stack { position: absolute; left: 50%; top: 0; transform: translateX(-50%); }
 .card {
-  /* Height is bounded so a long answer scrolls inside the card instead of
-     overflowing the stage. The calc keeps the card clear of the prompt bar
-     below and the orb above across laptop viewport heights. */
-  position: absolute; width: 512px; min-height: 372px; max-height: min(540px, calc(38vh + 88px));
-  left: -256px; top: -186px;
+  /* Anchored a fixed distance below the orb assembly so it never overlaps it,
+     with a bounded height so a long answer scrolls inside the card and the
+     bottom stays clear of the prompt bar across laptop viewport heights. */
+  position: absolute; width: 512px; min-height: 340px; max-height: min(540px, calc(100vh - 492px));
+  left: -256px; top: 272px;
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, rgba(var(--s1), 0.96), rgba(var(--s4), 0.96));
   border: 1px solid rgba(var(--lineRGB), 0.1); border-radius: 20px;
