@@ -348,7 +348,8 @@ function sharedSecretOk(bearer: string | undefined): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-app.post("/v1/chat/completions", async (c) => {
+const chatCompletions = async (c: any) => {
+  console.log("[convai] chat hit:", c.req.method, c.req.path);
   const authHeader = c.req.header("authorization");
   // A tenant's own flv_ key works; so does the shared Convai secret, which
   // binds to the documents tenant so the voice agent needs no personal key.
@@ -419,7 +420,14 @@ app.post("/v1/chat/completions", async (c) => {
     await s.write(frame({}, "stop"));
     await s.write("data: [DONE]\n\n");
   });
-});
+};
+
+// ElevenLabs' Custom LLM may treat the configured URL as a base and append
+// /chat/completions; register the handler at every plausible path so it works
+// however the agent URL is set.
+app.post("/v1/chat/completions", chatCompletions);
+app.post("/v1/chat/completions/chat/completions", chatCompletions);
+app.post("/chat/completions", chatCompletions);
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`FireLever Copilot listening on http://localhost:${info.port}`);
