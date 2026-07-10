@@ -20,7 +20,7 @@ export const WINDOWS: WindowDef[] = [
   { id: "flight", label: "FLIGHT", dockLabel: "Flight", icon: "plane", tier: "preview" },
   { id: "lunch", label: "LUNCH · YOUR USUAL", dockLabel: "Lunch", icon: "coffee", tier: "preview" },
   { id: "code", label: "CODE · PR #412", dockLabel: "Code PR", icon: "code", tier: "preview" },
-  { id: "sheet", label: "SHEET", dockLabel: "Sheet", icon: "grid", tier: "real" },
+  { id: "sheet", label: "SHEET", dockLabel: "Sheet", icon: "grid", tier: "preview" },
   { id: "contract", label: "CONTRACT · REDLINES", dockLabel: "Contract", icon: "edit", tier: "real" },
   { id: "ambient", label: "AMBIENT · WEATHER & WATCHLIST", dockLabel: "Weather", icon: "cloud", tier: "preview" },
   { id: "slack", label: "SLACK", dockLabel: "Slack", icon: "hash", tier: "preview" },
