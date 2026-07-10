@@ -93,10 +93,11 @@ body {
 
 .window-stack { position: absolute; left: 50%; top: 0; transform: translateX(-50%); }
 .card {
-  /* Anchored a fixed distance below the orb assembly so it never overlaps it,
-     with a bounded height so a long answer scrolls inside the card and the
-     bottom stays clear of the prompt bar across laptop viewport heights. */
-  position: absolute; width: 512px; min-height: 340px; max-height: min(540px, calc(100vh - 492px));
+  /* Height hugs the content: a short answer makes a short card, and only a long
+     answer grows the card up to max-height and then scrolls inside it. Anchored
+     below the orb so it never overlaps, and capped so the bottom clears the
+     prompt bar across laptop viewport heights. */
+  position: absolute; width: 512px; height: auto; min-height: 132px; max-height: min(560px, calc(100vh - 492px));
   left: -256px; top: 272px;
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, rgba(var(--s1), 0.96), rgba(var(--s4), 0.96));
