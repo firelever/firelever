@@ -359,7 +359,7 @@ const chatCompletions = async (c: any) => {
   }
   if (!tenant) return c.json({ error: "invalid or missing API key" }, 401);
 
-  const body = await c.req.json<{ messages?: { role: string; content: unknown }[]; stream?: boolean; model?: string }>();
+  const body = (await c.req.json()) as { messages?: { role: string; content: unknown }[]; stream?: boolean; model?: string };
   const messages = body.messages ?? [];
   const wantStream = body.stream !== false; // ElevenLabs streams by default
   const model = body.model || "firelever-rag";
