@@ -12,6 +12,7 @@ import { randomUUID, timingSafeEqual } from "crypto";
 import { authenticate, listTenants, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
 import { classifyIntent, answerInbox, answerChat } from "../rag/inbox-qa.js";
+import { streamVoiceReply } from "../rag/answer-voice.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
@@ -368,39 +369,37 @@ app.post("/v1/chat/completions", async (c) => {
       : Array.isArray(content)
         ? content.map((p) => (p && typeof p === "object" && "text" in p ? String((p as any).text ?? "") : "")).join(" ")
         : "";
+  const tenantId = tenant.id;
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const question = textOf(lastUser?.content).trim();
-
-  // Ground the reply through the same intent router the text UI uses.
-  let text: string;
-  if (!question) {
-    text = "I'm here — ask me about your documents, your inbox, or a contract.";
-  } else {
-    const intent = await classifyIntent(question);
-    const result =
-      intent === "chat"
-        ? await answerChat(question)
-        : intent === "inbox"
-          ? await answerInbox(tenant.id, question)
-          : await answer(tenant.id, question);
-    text = (result.answerable ? result.answer : "I can't find that in your documents.").replace(/\[\d+\]/g, "").trim();
-  }
+  const greeting = "I'm here. Ask me about your documents, your inbox, or a contract.";
 
   const id = "chatcmpl-" + randomUUID();
   const created = Math.floor(Date.now() / 1000);
 
   if (!wantStream) {
+    let text = greeting;
+    if (question) {
+      text = "";
+      try {
+        await streamVoiceReply(tenantId, question, (t) => {
+          text += t;
+        });
+      } catch {
+        text = "Sorry, I hit a problem pulling that up. Try again.";
+      }
+    }
     return c.json({
       id,
       object: "chat.completion",
       created,
       model,
-      choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content: text.trim() }, finish_reason: "stop" }],
     });
   }
 
-  // Stream the grounded answer as OpenAI SSE, chunked by word so ElevenLabs
-  // begins synthesizing the first words immediately instead of waiting.
+  // Stream the grounded answer as OpenAI SSE. streamVoiceReply uses a fast model
+  // and hybrid retrieval so the first spoken word leaves in ~1-2s.
   c.header("Content-Type", "text/event-stream");
   c.header("Cache-Control", "no-cache");
   c.header("Connection", "keep-alive");
@@ -410,8 +409,12 @@ app.post("/v1/chat/completions", async (c) => {
       JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finish }] }) +
       "\n\n";
     await s.write(frame({ role: "assistant" }));
-    for (const word of text.split(/(\s+)/)) {
-      if (word) await s.write(frame({ content: word }));
+    try {
+      if (!question) await s.write(frame({ content: greeting }));
+      else await streamVoiceReply(tenantId, question, async (t) => { await s.write(frame({ content: t })); });
+    } catch (e) {
+      console.error("[convai] stream failed:", e instanceof Error ? e.message : e);
+      await s.write(frame({ content: "Sorry, I hit a problem pulling that up. Try again." }));
     }
     await s.write(frame({}, "stop"));
     await s.write("data: [DONE]\n\n");

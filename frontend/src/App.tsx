@@ -74,13 +74,11 @@ export function App() {
         onMessage: (role, text) => {
           const t = text.trim();
           if (!t) return;
-          if (role === "user") {
-            setMessages((m) => [...m, { role: "user", text: t }]);
-            setLastQuestion(t);
-          } else {
-            setMessages((m) => [...m, { role: "bot", text: t }]);
-            setLiveAnswer({ answerable: true, answer: t, citations: [] });
-          }
+          const r = role === "user" ? "user" : "bot";
+          // The SDK can report a message twice; skip an immediate duplicate.
+          setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
+          if (r === "user") setLastQuestion(t);
+          else setLiveAnswer({ answerable: true, answer: t, citations: [] });
         },
         onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
       });
@@ -201,12 +199,16 @@ export function App() {
           {liveAnswer.answerable ? (
             <>
               <div style={{ fontSize: 18, lineHeight: 1.5, letterSpacing: "-0.012em", marginBottom: 14 }}>{liveAnswer.answer.replace(/\[\d+\]/g, "")}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {liveAnswer.citations.slice(0, 3).map((c) => (
-                  <span key={c.n} className="cite"><span className="tag">SRC</span><span className="ref">{c.document.replace(/^uploads\//, "")}</span></span>
-                ))}
-              </div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 14 }}>SOURCED · {liveAnswer.citations.length} CITATION{liveAnswer.citations.length === 1 ? "" : "S"}</div>
+              {liveAnswer.citations.length > 0 && (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {liveAnswer.citations.slice(0, 3).map((c) => (
+                      <span key={c.n} className="cite"><span className="tag">SRC</span><span className="ref">{c.document.replace(/^uploads\//, "")}</span></span>
+                    ))}
+                  </div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 14 }}>SOURCED · {liveAnswer.citations.length} CITATION{liveAnswer.citations.length === 1 ? "" : "S"}</div>
+                </>
+              )}
             </>
           ) : (
             <div style={{ borderLeft: "3px solid var(--warn)", paddingLeft: 12, color: "var(--mut)", fontSize: 14 }}>I can't find this in your documents.</div>
