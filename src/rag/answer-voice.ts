@@ -10,7 +10,10 @@ import { getEmbedder } from "./embeddings.js";
 import { search } from "./retrieval.js";
 import db from "./store.js";
 
-const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-haiku-4-5";
+// Sonnet reads the sources for the spoken answer — enough comprehension to
+// handle nuance (e.g. "who represents the seller" = the listing agent, not a
+// lawyer) while still fast with thinking off. Haiku is the fallback override.
+const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
 const SPEAK = "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes.";
 
 // Instant intent routing — no model call. Errs toward documents, the common case.
@@ -87,7 +90,7 @@ export async function streamVoiceReply(
     // small and fast, and it picks the relevant sources itself.
     const hits = await search(tenantId, question, 24, getEmbedder(), "hybrid").catch(() => []);
     const block = hits
-      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 700)}`)
+      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1000)}`)
       .join("\n\n");
     system =
       "You are Levi, answering out loud from the user's documents. Use ONLY the numbered sources; " +
@@ -101,6 +104,7 @@ export async function streamVoiceReply(
   const stream = client.messages.stream({
     model: VOICE_MODEL,
     max_tokens: 400,
+    thinking: { type: "disabled" }, // no thinking → fast first token for speech
     system,
     messages: [{ role: "user", content: userContent }],
   });
