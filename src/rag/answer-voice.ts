@@ -5,10 +5,44 @@
 // rerank round-trip, and streams plain spoken text token-by-token.
 import { client } from "../llm.js";
 import { getEmbedder } from "./embeddings.js";
-import { search } from "./retrieval.js";
+import { search, Hit } from "./retrieval.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-haiku-4-5";
+
+// Fast Haiku rerank: pick the few passages most useful for the question. Uses
+// short previews so it stays ~1s, and keeps retrieval correct without the
+// Opus reranker or the full-corpus context the quality path uses.
+async function pickRelevant(question: string, candidates: Hit[], topN: number): Promise<Hit[]> {
+  if (candidates.length <= topN) return candidates;
+  const list = candidates.map((h, i) => `[${i + 1}] ${h.text.slice(0, 240)}`).join("\n\n");
+  try {
+    const r = await client.messages.create({
+      model: VOICE_MODEL,
+      max_tokens: 40,
+      system: `Return the numbers of the up to ${topN} passages most useful for answering the question, most relevant first, comma-separated (e.g. "3, 1, 7"). Question: "${question}"`,
+      messages: [{ role: "user", content: list }],
+    });
+    const t = (r.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text ?? "";
+    const picked: Hit[] = [];
+    const seen = new Set<number>();
+    for (const m of t.matchAll(/\d+/g)) {
+      const n = +m[0];
+      const c = candidates[n - 1];
+      if (c && !seen.has(n)) {
+        seen.add(n);
+        picked.push(c);
+      }
+      if (picked.length >= topN) break;
+    }
+    for (let i = 0; i < candidates.length && picked.length < topN; i++) {
+      if (!seen.has(i + 1)) picked.push(candidates[i]);
+    }
+    return picked.slice(0, topN);
+  } catch {
+    return candidates.slice(0, topN);
+  }
+}
 
 // One fast word of intent so we route to documents, inbox, or small talk.
 async function voiceIntent(question: string): Promise<"chat" | "inbox" | "docs"> {
@@ -78,9 +112,12 @@ export async function streamVoiceReply(
       : `The inbox is empty.\n\nQuestion: ${question}`;
   } else {
     const embedder = getEmbedder();
-    const hits = await search(tenantId, question, 12, embedder, "hybrid");
+    const candidates = await search(tenantId, question, 30, embedder, "hybrid");
+    const hits = await pickRelevant(question, candidates, 6);
+    // Cap each passage so Haiku's input stays small (fast) even with big OCR
+    // chunks; rerank already surfaced the passage that holds the answer.
     const block = hits
-      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text}`)
+      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1600)}`)
       .join("\n\n");
     system =
       "You are Levi, answering out loud from the user's documents using ONLY the numbered sources. " +
