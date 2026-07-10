@@ -6,7 +6,8 @@ import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
 import { playAudio } from "./lib/voice";
-import { startFreeVoice, speechSupported, browserSpeak, FreeVoiceHandle } from "./lib/freeVoice";
+import { startFreeVoice, speechSupported, browserSpeak, looksLikeEcho, FreeVoiceHandle } from "./lib/freeVoice";
+import { loadKokoro, kokoroReady, kokoroSpeak } from "./lib/kokoro";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -45,6 +46,9 @@ export function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakStopRef = useRef<(() => void) | null>(null);
   const lastRoleRef = useRef<string>("");
+  const levelRef = useRef(0); // latest AEC'd mic level, for barge-in vs echo
+  const speakingTextRef = useRef(""); // what Levi is currently saying
+  const echoUntilRef = useRef(0); // echo-filter grace window after playback
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
@@ -62,18 +66,55 @@ export function App() {
     lastRoleRef.current = "";
     setMode("hearing");
     promote("answer");
+    // Preload the free Kokoro voice so the first reply doesn't wait on it.
+    if (!kokoroReady()) {
+      setMessages((m) => [...m, { role: "bot", text: "Getting my voice ready (one-time download)…" }]);
+      void loadKokoro().catch(() => {});
+    }
+
+    const isSpeaking = () => !!audioRef.current || !!speakStopRef.current;
     const stopAudio = () => {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       if (speakStopRef.current) { speakStopRef.current(); speakStopRef.current = null; }
     };
+    const doneSpeaking = () => {
+      echoUntilRef.current = Date.now() + 2000; // recognition lags; filter echo a bit longer
+      setMode("hearing");
+    };
+    // Speak with the best available voice: Liam (ElevenLabs) → Kokoro (free,
+    // natural) → browser voice (robotic last resort).
+    const speak = async (ans: string, liamAudio: string | null) => {
+      speakingTextRef.current = ans;
+      setMode("responding");
+      if (liamAudio) {
+        audioRef.current = playAudio(liamAudio, () => { audioRef.current = null; doneSpeaking(); });
+        return;
+      }
+      try {
+        const url = await kokoroSpeak(ans);
+        const a = new Audio(url);
+        audioRef.current = a;
+        a.onended = () => { URL.revokeObjectURL(url); if (audioRef.current === a) { audioRef.current = null; doneSpeaking(); } };
+        a.onerror = a.onended as any;
+        await a.play();
+      } catch {
+        speakStopRef.current = browserSpeak(ans, () => { speakStopRef.current = null; doneSpeaking(); });
+      }
+    };
+
     const handle = await startFreeVoice({
       onStart: () => setMode("hearing"),
-      onSpeechStart: () => { if (audioRef.current) { stopAudio(); setMode("hearing"); } },
-      onLevel: (lvl) => setLevel(lvl),
+      // Barge-in: only when the (echo-cancelled) mic shows real input energy —
+      // Levi's own voice from the speakers stays quiet on this stream.
+      onSpeechStart: () => { if (isSpeaking() && levelRef.current > 0.12) { stopAudio(); doneSpeaking(); } },
+      onLevel: (lvl) => { levelRef.current = lvl; setLevel(lvl); },
       onUtterance: async (text) => {
         const t = text.trim();
         if (!t) return;
-        stopAudio(); // barge-in: cut off any in-progress reply
+        // Ignore Levi hearing himself (during playback or just after).
+        const inEchoWindow = isSpeaking() || Date.now() < echoUntilRef.current;
+        if (inEchoWindow && looksLikeEcho(t, speakingTextRef.current)) return;
+        stopAudio(); // real user turn: cut off any in-progress reply
         lastRoleRef.current = "user";
         setMessages((m) => [...m, { role: "user", text: t }]);
         setLastQuestion(t);
@@ -85,15 +126,7 @@ export function App() {
             lastRoleRef.current = "bot";
             setMessages((m) => [...m, { role: "bot", text: ans }]);
             setLiveAnswer({ answerable: true, answer: ans, citations: [] });
-          }
-          if (r.audio) {
-            // Liam (ElevenLabs) when quota allows.
-            setMode("responding");
-            audioRef.current = playAudio(r.audio, () => { audioRef.current = null; setMode("hearing"); });
-          } else if (ans) {
-            // Free browser voice fallback (ElevenLabs out of quota).
-            setMode("responding");
-            speakStopRef.current = browserSpeak(ans, () => { speakStopRef.current = null; setMode("hearing"); });
+            await speak(ans, r.audio);
           } else setMode("hearing");
         } catch (e) {
           setMessages((m) => [...m, { role: "bot", text: "Voice error: " + (e instanceof Error ? e.message : e) }]);

@@ -21,6 +21,19 @@ export function speechSupported(): boolean {
   return typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 }
 
+// Without WebRTC echo cancellation, speech recognition hears Levi's own voice
+// from the speakers. An utterance that mostly repeats words Levi just spoke is
+// echo, not the user talking.
+export function looksLikeEcho(utterance: string, spoken: string): boolean {
+  const norm = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/).filter((w) => w.length > 1);
+  const u = norm(utterance);
+  if (!u.length) return true;
+  const said = new Set(norm(spoken));
+  const hits = u.filter((w) => said.has(w)).length;
+  return hits / u.length >= 0.55;
+}
+
 // Free browser text-to-speech (no key, no quota). Used as the fallback when the
 // nicer ElevenLabs voice is out of quota. Returns a stop() for barge-in.
 export function browserSpeak(text: string, onEnd: () => void): () => void {
