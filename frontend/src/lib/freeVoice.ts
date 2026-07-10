@@ -21,6 +21,36 @@ export function speechSupported(): boolean {
   return typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 }
 
+// Free browser text-to-speech (no key, no quota). Used as the fallback when the
+// nicer ElevenLabs voice is out of quota. Returns a stop() for barge-in.
+export function browserSpeak(text: string, onEnd: () => void): () => void {
+  const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+  if (!synth) {
+    onEnd();
+    return () => {};
+  }
+  try {
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.02;
+    const voices = synth.getVoices();
+    const preferred = voices.find(
+      (v) => v.lang.startsWith("en") && /Samantha|Alex|Daniel|Aaron|Google US English/i.test(v.name)
+    );
+    if (preferred) u.voice = preferred;
+    u.onend = onEnd;
+    u.onerror = onEnd;
+    synth.speak(u);
+  } catch {
+    onEnd();
+  }
+  return () => {
+    try {
+      synth.cancel();
+    } catch {}
+  };
+}
+
 export async function startFreeVoice(h: FreeVoiceHandlers): Promise<FreeVoiceHandle | null> {
   const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   if (!SR) {

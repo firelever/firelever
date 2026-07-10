@@ -6,7 +6,7 @@ import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
 import { playAudio } from "./lib/voice";
-import { startFreeVoice, speechSupported, FreeVoiceHandle } from "./lib/freeVoice";
+import { startFreeVoice, speechSupported, browserSpeak, FreeVoiceHandle } from "./lib/freeVoice";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -43,6 +43,7 @@ export function App() {
   const [liveOn, setLiveOn] = useState(false);
   const freeHandle = useRef<FreeVoiceHandle | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speakStopRef = useRef<(() => void) | null>(null);
   const lastRoleRef = useRef<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
@@ -63,6 +64,7 @@ export function App() {
     promote("answer");
     const stopAudio = () => {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if (speakStopRef.current) { speakStopRef.current(); speakStopRef.current = null; }
     };
     const handle = await startFreeVoice({
       onStart: () => setMode("hearing"),
@@ -85,8 +87,13 @@ export function App() {
             setLiveAnswer({ answerable: true, answer: ans, citations: [] });
           }
           if (r.audio) {
+            // Liam (ElevenLabs) when quota allows.
             setMode("responding");
             audioRef.current = playAudio(r.audio, () => { audioRef.current = null; setMode("hearing"); });
+          } else if (ans) {
+            // Free browser voice fallback (ElevenLabs out of quota).
+            setMode("responding");
+            speakStopRef.current = browserSpeak(ans, () => { speakStopRef.current = null; setMode("hearing"); });
           } else setMode("hearing");
         } catch (e) {
           setMessages((m) => [...m, { role: "bot", text: "Voice error: " + (e instanceof Error ? e.message : e) }]);
