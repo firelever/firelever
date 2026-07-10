@@ -155,12 +155,12 @@ export function Orb({ theme, mode, level, name = "LEVI", idleLabel = "READY" }: 
 
   return (
     <div className="orb-assembly">
-      <canvas ref={canvasRef} width={300} height={300} style={{ width: 146, height: 146, filter: "var(--orbShadow)" }} />
+      <canvas ref={canvasRef} width={300} height={300} style={{ width: 104, height: 104, filter: "var(--orbShadow)" }} />
       <div className="orb-status">
         <span className="dot" style={{ background: DOT[mode], animation: "blink 1.6s infinite" }} />
         {name} · {mode === "muted" ? idleLabel : LABEL[mode]}
       </div>
-      <canvas ref={waveRef} width={150} height={28} style={{ width: 150, height: 28 }} />
+      <canvas ref={waveRef} width={150} height={22} style={{ width: 130, height: 22 }} />
       <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
     </div>
   );

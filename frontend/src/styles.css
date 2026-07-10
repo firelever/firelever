@@ -85,8 +85,8 @@ body {
 /* ---- stage ---- */
 .stage { position: relative; flex: 1; perspective: 1600px; overflow: hidden; }
 .orb-assembly {
-  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 5;
+  position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 5;
 }
 .orb-status { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--mut); display: flex; align-items: center; gap: 7px; }
 .orb-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); }
@@ -97,8 +97,8 @@ body {
      answer grows the card up to max-height and then scrolls inside it. Anchored
      below the orb so it never overlaps, and capped so the bottom clears the
      prompt bar across laptop viewport heights. */
-  position: absolute; width: 512px; height: auto; min-height: 132px; max-height: min(560px, calc(100vh - 492px));
-  left: -256px; top: 272px;
+  position: absolute; width: 512px; height: auto; min-height: 132px; max-height: min(600px, calc(100vh - 412px));
+  left: -256px; top: 208px;
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, rgba(var(--s1), 0.96), rgba(var(--s4), 0.96));
   border: 1px solid rgba(var(--lineRGB), 0.1); border-radius: 20px;

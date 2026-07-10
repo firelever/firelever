@@ -43,6 +43,7 @@ export function App() {
   const [liveOn, setLiveOn] = useState(false);
   const convoRef = useRef<LiveConvo | null>(null);
   const liveRaf = useRef(0);
+  const lastRoleRef = useRef<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +58,7 @@ export function App() {
   async function toggleLive() {
     if (liveOn) { await convoRef.current?.endSession().catch(() => {}); return; }
     setLiveOn(true);
+    lastRoleRef.current = "";
     setMode("thinking");
     promote("answer");
     try {
@@ -76,10 +78,14 @@ export function App() {
           const t = text.trim();
           if (!t) return;
           const r = role === "user" ? "user" : "bot";
+          const prevRole = lastRoleRef.current;
+          lastRoleRef.current = r;
           // The SDK can report a message twice; skip an immediate duplicate.
           setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
           if (r === "user") setLastQuestion(t);
-          else setLiveAnswer({ answerable: true, answer: t, citations: [] });
+          // Only surface a real answer (an agent reply to a question) in the card,
+          // not the opening greeting or a reconnect greeting.
+          else if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
         },
         onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
       });
