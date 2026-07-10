@@ -43,6 +43,7 @@ export const api = {
   delItem: (id: number) => req<{ ok: boolean }>(`/workspace/item/${id}`, { method: "DELETE" }),
   redlines: () => req<RedlineResult>("/redlines", { method: "POST" }),
   voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
+  voiceText: (text: string) => req<{ answer: string; audio: string | null }>("/voice/text", { method: "POST", body: JSON.stringify({ text }) }),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
   convaiToken: () => req<{ token: string; agentId: string }>("/convai/token"),
   voice: async (blob: Blob): Promise<VoiceResult> => {

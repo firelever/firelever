@@ -6,7 +6,7 @@ import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
 import { playAudio } from "./lib/voice";
-import { startLive, LiveConvo } from "./lib/live";
+import { startFreeVoice, speechSupported, FreeVoiceHandle } from "./lib/freeVoice";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -41,68 +41,63 @@ export function App() {
   const [speakReplies, setSpeakReplies] = useState(true);
   const [liveReady, setLiveReady] = useState(false);
   const [liveOn, setLiveOn] = useState(false);
-  const convoRef = useRef<LiveConvo | null>(null);
-  const liveRaf = useRef(0);
+  const freeHandle = useRef<FreeVoiceHandle | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastRoleRef = useRef<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.voiceStatus().then((s) => setVoiceReady(s.configured)).catch(() => {});
-    api.convaiStatus().then((s) => setLiveReady(s.configured)).catch(() => {});
+    setLiveReady(speechSupported());
   }, []);
 
-  // Tap the mic for a live, interruptible conversation with Levi. ElevenLabs
-  // owns the voice loop (streaming STT, turn-taking, barge-in, TTS); our server
-  // is the agent's Custom LLM, so every reply is grounded in your documents.
+  // Tap the mic for a live, interruptible conversation. The browser transcribes
+  // speech for free (Web Speech API); the server grounds the reply in your
+  // documents and returns Liam's voice. Talking over Levi barges in.
   async function toggleLive() {
-    if (liveOn) { await convoRef.current?.endSession().catch(() => {}); return; }
+    if (liveOn) { freeHandle.current?.stop(); return; }
     setLiveOn(true);
     lastRoleRef.current = "";
-    setMode("thinking");
+    setMode("hearing");
     promote("answer");
-    try {
-      const convo = await startLive({
-        onStatus: (s) => {
-          if (s === "connected") setMode("hearing");
-          if (s === "disconnected") {
-            cancelAnimationFrame(liveRaf.current);
-            convoRef.current = null;
-            setLiveOn(false);
-            setLevel(0);
-            setMode("muted");
+    const stopAudio = () => {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    };
+    const handle = await startFreeVoice({
+      onStart: () => setMode("hearing"),
+      onSpeechStart: () => { if (audioRef.current) { stopAudio(); setMode("hearing"); } },
+      onLevel: (lvl) => setLevel(lvl),
+      onUtterance: async (text) => {
+        const t = text.trim();
+        if (!t) return;
+        stopAudio(); // barge-in: cut off any in-progress reply
+        lastRoleRef.current = "user";
+        setMessages((m) => [...m, { role: "user", text: t }]);
+        setLastQuestion(t);
+        setMode("thinking");
+        try {
+          const r = await api.voiceText(t);
+          const ans = (r.answer || "").trim();
+          if (ans) {
+            lastRoleRef.current = "bot";
+            setMessages((m) => [...m, { role: "bot", text: ans }]);
+            setLiveAnswer({ answerable: true, answer: ans, citations: [] });
           }
-        },
-        onMode: (m) => setMode(m === "speaking" ? "responding" : "hearing"),
-        onMessage: (role, text) => {
-          const t = text.trim();
-          if (!t) return;
-          const r = role === "user" ? "user" : "bot";
-          const prevRole = lastRoleRef.current;
-          lastRoleRef.current = r;
-          // The SDK can report a message twice; skip an immediate duplicate.
-          setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
-          if (r === "user") setLastQuestion(t);
-          // Only surface a real answer (an agent reply to a question) in the card,
-          // not the opening greeting or a reconnect greeting.
-          else if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
-        },
-        onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
-      });
-      convoRef.current = convo;
-      // Drive the orb from live mic / agent volume.
-      const tick = () => {
-        const c = convoRef.current;
-        if (!c) return;
-        setLevel(Math.min(1, Math.max(c.getInputVolume(), c.getOutputVolume()) * 1.7));
-        liveRaf.current = requestAnimationFrame(tick);
-      };
-      liveRaf.current = requestAnimationFrame(tick);
-    } catch (e) {
-      setLiveOn(false);
-      setMode("muted");
-      setMessages((m) => [...m, { role: "bot", text: "Couldn't start voice: " + (e instanceof Error ? e.message : e) }]);
-    }
+          if (r.audio) {
+            setMode("responding");
+            audioRef.current = playAudio(r.audio, () => { audioRef.current = null; setMode("hearing"); });
+          } else setMode("hearing");
+        } catch (e) {
+          setMessages((m) => [...m, { role: "bot", text: "Voice error: " + (e instanceof Error ? e.message : e) }]);
+          setMode("hearing");
+        }
+      },
+      onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
+      onEnd: () => { stopAudio(); freeHandle.current = null; setLiveOn(false); setLevel(0); setMode("muted"); },
+    });
+    if (!handle) { setLiveOn(false); setMode("muted"); return; }
+    freeHandle.current = handle;
   }
 
   useEffect(() => applyTheme(theme), [theme]);

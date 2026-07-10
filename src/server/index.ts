@@ -297,6 +297,33 @@ app.post("/api/voice", limited("ask"), async (c) => {
   });
 });
 
+// ---------- Free-STT voice: browser does speech-to-text, we ground + speak ----------
+// The browser's Web Speech API transcribes for free (no key, no quota); it POSTs
+// the transcript here, we ground it (fast voice path) and return Liam audio via
+// ElevenLabs raw TTS — a separate, larger free quota than Conversational AI.
+app.post("/api/voice/text", limited("ask"), async (c) => {
+  const tenant = c.get("tenant");
+  const { text } = await c.req.json<{ text?: string }>();
+  const q = (text ?? "").trim();
+  if (!q) return c.json({ answer: "", audio: null });
+  let answer = "";
+  try {
+    await streamVoiceReply(tenant.id, q, (t) => {
+      answer += t;
+    });
+  } catch {
+    answer = "Sorry, I hit a problem pulling that up.";
+  }
+  answer = answer.trim();
+  let audio: string | null = null;
+  try {
+    audio = (await synthesize(answer)).toString("base64");
+  } catch (e) {
+    console.error("[voice/text] tts failed:", e instanceof Error ? e.message : e);
+  }
+  return c.json({ answer, audio });
+});
+
 // ---------- ElevenLabs Conversational AI: browser connection token ----------
 // The browser needs a short-lived token to open a private-agent conversation
 // without ever seeing the xi-api-key. Tenant-authed like the rest of /api.
