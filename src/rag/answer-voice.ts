@@ -1,74 +1,33 @@
 // Low-latency streaming answers for the voice path (ElevenLabs Custom LLM).
 // The text UI uses answer.ts (Opus + structured output + citations) for max
-// quality; voice needs the first spoken word out fast or ElevenLabs times out
-// the turn. So this path uses a fast model, hybrid retrieval, and streams plain
-// spoken text. Intent classification runs concurrently with retrieval, and the
-// answer call selects the relevant sources itself (no separate rerank round-trip).
+// quality; voice needs the first spoken word out in a few seconds or ElevenLabs
+// times out the turn. On the small prod CPU each model round-trip is ~2s, so
+// this path minimizes them: a keyword intent heuristic (no LLM), one hybrid
+// retrieval, and a single streaming answer call over a wide-but-truncated
+// candidate set (so the answer passage is included without a rerank round-trip).
 import { client } from "../llm.js";
 import { getEmbedder } from "./embeddings.js";
-import { search, Hit } from "./retrieval.js";
+import { search } from "./retrieval.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-haiku-4-5";
-
-// One fast word of intent so we route to documents, inbox, or small talk.
-async function voiceIntent(question: string): Promise<"chat" | "inbox" | "docs"> {
-  try {
-    const r = await client.messages.create({
-      model: VOICE_MODEL,
-      max_tokens: 8,
-      system:
-        "Classify the message as exactly one word: chat (greeting, small talk, or a question about you the assistant), inbox (about their email inbox, senders, or replies), or docs (about their uploaded documents, contracts, or files). Reply with only that one word.",
-      messages: [{ role: "user", content: question }],
-    });
-    const t = (r.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text?.toLowerCase() ?? "";
-    if (t.includes("inbox")) return "inbox";
-    if (t.includes("chat")) return "chat";
-    return "docs";
-  } catch {
-    return "docs";
-  }
-}
-
 const SPEAK = "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes.";
 
-// Fast Haiku rerank: pick the passages most useful for the question from the
-// hybrid candidates. Short previews keep it ~1s; recovers recall that a raw
-// top-k misses on large OCR corpora (which a single answer call over noisy
-// candidates gets wrong).
-async function pickRelevant(question: string, candidates: Hit[], topN: number): Promise<Hit[]> {
-  if (candidates.length <= topN) return candidates;
-  const list = candidates.map((h, i) => `[${i + 1}] ${h.text.slice(0, 240)}`).join("\n\n");
-  try {
-    const r = await client.messages.create({
-      model: VOICE_MODEL,
-      max_tokens: 40,
-      system: `Return the numbers of the up to ${topN} passages most useful for answering the question, most relevant first, comma-separated (e.g. "3, 1, 7"). Question: "${question}"`,
-      messages: [{ role: "user", content: list }],
-    });
-    const t = (r.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text ?? "";
-    const picked: Hit[] = [];
-    const seen = new Set<number>();
-    for (const m of t.matchAll(/\d+/g)) {
-      const n = +m[0];
-      const c = candidates[n - 1];
-      if (c && !seen.has(n)) {
-        seen.add(n);
-        picked.push(c);
-      }
-      if (picked.length >= topN) break;
-    }
-    for (let i = 0; i < candidates.length && picked.length < topN; i++) {
-      if (!seen.has(i + 1)) picked.push(candidates[i]);
-    }
-    return picked.slice(0, topN);
-  } catch {
-    return candidates.slice(0, topN);
-  }
+// Instant intent routing — no model call. Errs toward documents, the common case.
+function routeIntent(q: string): "chat" | "inbox" | "docs" {
+  const s = q.toLowerCase().trim();
+  if (/\b(inbox|e-?mails?|reply|replies|sender|unread|mailbox|triage)\b/.test(s)) return "inbox";
+  if (
+    s.split(/\s+/).length <= 2 ||
+    /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))\b/.test(s) ||
+    /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(s)
+  )
+    return "chat";
+  return "docs";
 }
 
-// Load the embedding model up front so the first real query doesn't pay the
-// cold model-load cost (~15s on the CPU box). Called on server boot.
+// Preload the embedding model up front so the first real document query doesn't
+// pay the cold model-load cost (~15s on the CPU box). Called on server boot.
 export async function warmVoice(): Promise<void> {
   try {
     await getEmbedder().embed(["warm up"], "query");
@@ -83,11 +42,7 @@ export async function streamVoiceReply(
   question: string,
   onDelta: (t: string) => void | Promise<void>
 ): Promise<void> {
-  // Start document retrieval speculatively while intent is classified — docs is
-  // the common case, and the result is simply discarded for chat/inbox turns.
-  const searchP: Promise<Hit[]> = search(tenantId, question, 30, getEmbedder(), "hybrid").catch(() => []);
-  const intent = await voiceIntent(question);
-
+  const intent = routeIntent(question);
   let system: string;
   let userContent: string;
 
@@ -127,14 +82,17 @@ export async function streamVoiceReply(
       ? `Inbox (${rows.length} emails):\n${table}\n\nQuestion: ${question}`
       : `The inbox is empty.\n\nQuestion: ${question}`;
   } else {
-    const candidates = await searchP;
-    const hits = await pickRelevant(question, candidates, 6);
+    // One retrieval, one answer call. A wide candidate set (top 24) keeps recall
+    // high so the answer passage is present; short previews keep Haiku's input
+    // small and fast, and it picks the relevant sources itself.
+    const hits = await search(tenantId, question, 24, getEmbedder(), "hybrid").catch(() => []);
     const block = hits
-      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1600)}`)
+      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 700)}`)
       .join("\n\n");
     system =
-      "You are Levi, answering out loud from the user's documents using ONLY the numbered sources. " +
-      "Do not read source numbers or citation markers aloud. If the sources do not contain the answer, " +
+      "You are Levi, answering out loud from the user's documents. Use ONLY the numbered sources; " +
+      "several are irrelevant, so rely on the ones that actually answer the question and ignore the rest. " +
+      "Do not read source numbers or citation markers aloud. If none of the sources contain the answer, " +
       "say you couldn't find it in their documents. " +
       SPEAK;
     userContent = hits.length ? `<sources>\n${block}\n</sources>\n\nQuestion: ${question}` : `No sources found.\n\nQuestion: ${question}`;
