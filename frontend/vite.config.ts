@@ -8,6 +8,11 @@ export default defineConfig({
   build: { outDir: "../web-dist", emptyOutDir: true },
   server: {
     port: 5173,
-    proxy: { "/api": "http://localhost:8787" },
+    // Dev proxies to the deployed backend so the frontend talks to real data
+    // (documents, inbox). In prod the Hono server serves this build from the
+    // same origin, so no proxy is needed there.
+    proxy: {
+      "/api": { target: "https://firelever-copilot.fly.dev", changeOrigin: true, secure: true },
+    },
   },
 });
