@@ -296,6 +296,25 @@ app.post("/api/voice", limited("ask"), async (c) => {
   });
 });
 
+// ---------- ElevenLabs Conversational AI: browser connection token ----------
+// The browser needs a short-lived token to open a private-agent conversation
+// without ever seeing the xi-api-key. Tenant-authed like the rest of /api.
+app.get("/api/convai/status", (c) =>
+  c.json({ configured: !!process.env.CONVAI_AGENT_ID && !!process.env.ELEVENLABS_API_KEY })
+);
+
+app.get("/api/convai/token", async (c) => {
+  const agentId = process.env.CONVAI_AGENT_ID;
+  const key = process.env.ELEVENLABS_API_KEY;
+  if (!agentId || !key) return c.json({ error: "voice agent not configured" }, 503);
+  const r = await fetch(`https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${agentId}`, {
+    headers: { "xi-api-key": key },
+  });
+  if (!r.ok) return c.json({ error: `token fetch failed (${r.status})` }, 502);
+  const data = (await r.json()) as { token?: string };
+  return c.json({ token: data.token, agentId });
+});
+
 // ---------- OpenAI-compatible endpoint for ElevenLabs Conversational AI ----------
 // ElevenLabs Agents own the voice loop (streaming STT, turn-taking, barge-in,
 // TTS). They call this as the "Custom LLM": the conversation arrives as an
