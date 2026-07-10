@@ -52,3 +52,22 @@ export function authenticate(authHeader: string | undefined): Tenant | null {
 export function listTenants(): (Tenant & { created_at: string })[] {
   return db.prepare(`SELECT id, name, created_at FROM tenants ORDER BY created_at`).all() as any;
 }
+
+// Issue a fresh API key for an existing tenant (its documents are untouched).
+// Used when the original one-time key was lost. The old key stops working.
+export function rekeyTenant(id: string): { tenant: Tenant; apiKey: string } {
+  const row = db.prepare(`SELECT id, name FROM tenants WHERE id = ?`).get(id) as Tenant | undefined;
+  if (!row) throw new Error(`no tenant with id "${id}"`);
+  const apiKey = "flv_" + crypto.randomBytes(16).toString("hex");
+  db.prepare(`UPDATE tenants SET api_key_hash = ? WHERE id = ?`).run(hashKey(apiKey), id);
+  return { tenant: row, apiKey };
+}
+
+// The tenant that owns the most documents — the user's real workspace when the
+// tenant id isn't known.
+export function topDocsTenantId(): string | null {
+  const row = db
+    .prepare(`SELECT tenant_id FROM documents GROUP BY tenant_id ORDER BY COUNT(*) DESC LIMIT 1`)
+    .get() as { tenant_id: string } | undefined;
+  return row?.tenant_id ?? null;
+}
