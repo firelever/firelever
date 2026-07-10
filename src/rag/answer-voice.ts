@@ -32,6 +32,41 @@ async function voiceIntent(question: string): Promise<"chat" | "inbox" | "docs">
 
 const SPEAK = "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes.";
 
+// Fast Haiku rerank: pick the passages most useful for the question from the
+// hybrid candidates. Short previews keep it ~1s; recovers recall that a raw
+// top-k misses on large OCR corpora (which a single answer call over noisy
+// candidates gets wrong).
+async function pickRelevant(question: string, candidates: Hit[], topN: number): Promise<Hit[]> {
+  if (candidates.length <= topN) return candidates;
+  const list = candidates.map((h, i) => `[${i + 1}] ${h.text.slice(0, 240)}`).join("\n\n");
+  try {
+    const r = await client.messages.create({
+      model: VOICE_MODEL,
+      max_tokens: 40,
+      system: `Return the numbers of the up to ${topN} passages most useful for answering the question, most relevant first, comma-separated (e.g. "3, 1, 7"). Question: "${question}"`,
+      messages: [{ role: "user", content: list }],
+    });
+    const t = (r.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text ?? "";
+    const picked: Hit[] = [];
+    const seen = new Set<number>();
+    for (const m of t.matchAll(/\d+/g)) {
+      const n = +m[0];
+      const c = candidates[n - 1];
+      if (c && !seen.has(n)) {
+        seen.add(n);
+        picked.push(c);
+      }
+      if (picked.length >= topN) break;
+    }
+    for (let i = 0; i < candidates.length && picked.length < topN; i++) {
+      if (!seen.has(i + 1)) picked.push(candidates[i]);
+    }
+    return picked.slice(0, topN);
+  } catch {
+    return candidates.slice(0, topN);
+  }
+}
+
 // Load the embedding model up front so the first real query doesn't pay the
 // cold model-load cost (~15s on the CPU box). Called on server boot.
 export async function warmVoice(): Promise<void> {
@@ -50,7 +85,7 @@ export async function streamVoiceReply(
 ): Promise<void> {
   // Start document retrieval speculatively while intent is classified — docs is
   // the common case, and the result is simply discarded for chat/inbox turns.
-  const searchP: Promise<Hit[]> = search(tenantId, question, 14, getEmbedder(), "hybrid").catch(() => []);
+  const searchP: Promise<Hit[]> = search(tenantId, question, 30, getEmbedder(), "hybrid").catch(() => []);
   const intent = await voiceIntent(question);
 
   let system: string;
@@ -92,16 +127,14 @@ export async function streamVoiceReply(
       ? `Inbox (${rows.length} emails):\n${table}\n\nQuestion: ${question}`
       : `The inbox is empty.\n\nQuestion: ${question}`;
   } else {
-    const hits = await searchP;
-    // Cap each passage so Haiku's input stays small (fast) even with big OCR
-    // chunks; the model picks the relevant ones itself.
+    const candidates = await searchP;
+    const hits = await pickRelevant(question, candidates, 6);
     const block = hits
-      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1200)}`)
+      .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 1600)}`)
       .join("\n\n");
     system =
-      "You are Levi, answering out loud from the user's documents. Use ONLY the numbered sources; " +
-      "some are irrelevant, so rely on the ones that actually answer the question and ignore the rest. " +
-      "Do not read source numbers or citation markers aloud. If none of the sources contain the answer, " +
+      "You are Levi, answering out loud from the user's documents using ONLY the numbered sources. " +
+      "Do not read source numbers or citation markers aloud. If the sources do not contain the answer, " +
       "say you couldn't find it in their documents. " +
       SPEAK;
     userContent = hits.length ? `<sources>\n${block}\n</sources>\n\nQuestion: ${question}` : `No sources found.\n\nQuestion: ${question}`;
