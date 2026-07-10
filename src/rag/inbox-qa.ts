@@ -10,24 +10,70 @@ import { GroundedAnswer } from "./answer.js";
 
 const IntentSchema = z.object({
   target: z
-    .enum(["documents", "inbox"])
+    .enum(["documents", "inbox", "chat"])
     .describe(
-      "inbox = about emails received, senders, what needs a reply, inbox cleanup; documents = about uploaded files, contracts, policies"
+      "chat = greetings, small talk, thanks, or questions about Levi itself (who are you, what can you do, can you hear me); inbox = about emails received, senders, what needs a reply, inbox cleanup; documents = about uploaded files, contracts, policies"
     ),
 });
 
 // One cheap Haiku call; defaults to documents (existing behavior) on any doubt.
-export async function classifyIntent(question: string): Promise<"documents" | "inbox"> {
+export async function classifyIntent(question: string): Promise<"documents" | "inbox" | "chat"> {
   try {
     const r = await extract(
       IntentSchema,
       "ask-intent",
-      "Is this question about the user's email INBOX or about their uploaded DOCUMENTS?",
+      "Classify what this message is about: the user's email INBOX, their uploaded DOCUMENTS, or CHAT (a greeting, small talk, or a question about Levi the assistant itself).",
       question
     );
     return r.target;
   } catch {
     return "documents";
+  }
+}
+
+// Conversational Levi: greetings, small talk, and questions about the assistant.
+// No retrieval — a short, warm spoken reply. Always answerable.
+export async function answerChat(question: string): Promise<GroundedAnswer> {
+  const system =
+    "You are Levi, a warm, concise voice-first operations copilot for FireLever. " +
+    "You help this user with their uploaded documents and contracts, their email inbox, " +
+    "drafting grounded replies, reviewing contracts for risky clauses, and keeping tasks and " +
+    "schedule. Reply in one or two short, natural spoken sentences. Be friendly and direct. " +
+    "If asked what you can do, name a few of those abilities. If asked whether you can be heard " +
+    "or about your voice, confirm warmly that you speak your answers aloud. " +
+    "Never use dashes or em dashes in your reply.";
+  try {
+    const res = await withDeadline("chat", (signal) =>
+      client.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 200,
+          system,
+          messages: [{ role: "user", content: question }],
+        },
+        { signal }
+      )
+    );
+    const text = res.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join(" ")
+      .trim();
+    return {
+      answerable: true,
+      answer: text || "Hey, I'm Levi. Ask me about your documents, inbox, or a contract.",
+      cited_sources: [],
+      sources: [],
+      mode: "chat",
+    };
+  } catch {
+    return {
+      answerable: true,
+      answer: "Hey, I'm Levi. Ask me about your documents, your inbox, or a contract and I'll answer out loud.",
+      cited_sources: [],
+      sources: [],
+      mode: "chat",
+    };
   }
 }
 

@@ -25,11 +25,11 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
 }
 
 export interface Citation { n: number; document: string; heading: string | null; excerpt: string }
-export interface AskResult { answerable: boolean; answer: string; citations: Citation[] }
+export interface AskResult { answerable: boolean; answer: string; citations: Citation[]; audio?: string | null }
 
 export const api = {
   me: () => req<{ id: string; name: string }>("/me"),
-  ask: (question: string) => req<AskResult>("/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  ask: (question: string, speak = false) => req<AskResult>("/ask", { method: "POST", body: JSON.stringify({ question, speak }) }),
   documents: () => req<{ documents: { path: string; title: string; chunks: number; ingested_at: string }[] }>("/documents"),
   triage: () =>
     req<{ queue: { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }[] }>("/triage"),

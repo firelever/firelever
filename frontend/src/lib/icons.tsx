@@ -25,4 +25,6 @@ export const Icon = {
   mic: ({ size }: P) => S("M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z|M19 10v2a7 7 0 0 1-14 0v-2|M12 19v4", size),
   send: ({ size }: P) => S("M12 19V5|M5 12l7-7 7 7", size),
   sparkle: ({ size }: P) => S("M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z", size),
+  volume: ({ size }: P) => S("M11 5L6 9H2v6h4l5 4z|M15.5 8.5a5 5 0 0 1 0 7|M19 5a9 9 0 0 1 0 14", size),
+  mute: ({ size }: P) => S("M11 5L6 9H2v6h4l5 4z|M22 9l-6 6|M16 9l6 6", size),
 };

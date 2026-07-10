@@ -37,6 +37,7 @@ export function App() {
   const [level, setLevel] = useState(0);
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
+  const [speakReplies, setSpeakReplies] = useState(true);
   const recHandle = useRef<RecordHandle | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
@@ -128,7 +129,7 @@ export function App() {
     setLastQuestion(q);
     promote("answer");
     try {
-      const r = await api.ask(q);
+      const r = await api.ask(q, speakReplies && voiceReady);
       setLiveAnswer(r);
       const cite = r.citations[0];
       setMode("responding");
@@ -136,7 +137,9 @@ export function App() {
         ...m,
         { role: "bot", text: r.answerable ? r.answer : "I can't find this in your documents. Try uploading whatever covers it, then ask again.", cite: cite ? `${cite.document.replace(/^uploads\//, "")}${cite.heading ? " · " + cite.heading : ""}` : undefined },
       ]);
-      setTimeout(() => setMode("muted"), 2200);
+      // Speak the reply aloud when voice is on; otherwise settle the orb.
+      if (r.audio) playAudio(r.audio, () => setMode("muted"));
+      else setTimeout(() => setMode("muted"), 2200);
     } catch (e) {
       setMessages((m) => [...m, { role: "bot", text: "Error: " + (e instanceof Error ? e.message : e) }]);
       setMode("muted");
@@ -321,12 +324,17 @@ export function App() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <span className="clock">{now}</span>
+            {voiceReady && (
+              <span className={"pill" + (speakReplies ? " on" : "")} onClick={() => setSpeakReplies((s) => !s)} title="Levi speaks replies aloud">
+                {speakReplies ? <Icon.volume size={13} /> : <Icon.mute size={13} />} {speakReplies ? "VOICE" : "MUTED"}
+              </span>
+            )}
             <span className={"pill" + (auto ? " on" : "")} onClick={() => setAuto((a) => !a)}><span className="dot" /> {auto ? "AUTO" : "MANUAL"}</span>
           </div>
         </div>
 
         <div className="stage">
-          <Orb theme={theme} mode={mode} level={level} />
+          <Orb theme={theme} mode={mode} level={level} idleLabel={voiceReady ? (speakReplies ? "READY" : "MUTED") : "READY"} />
           <div className="window-stack" style={{ transformStyle: "preserve-3d" }}>
             {WINDOWS.map((w) => (
               <div key={w.id} className={"card" + (order[0] === w.id ? " focused" : "")} style={rankStyle(w.id)} onClick={() => promote(w.id)}>

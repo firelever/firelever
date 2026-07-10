@@ -10,7 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { authenticate, Tenant } from "./auth.js";
 import { answer } from "../rag/answer.js";
-import { classifyIntent, answerInbox } from "../rag/inbox-qa.js";
+import { classifyIntent, answerInbox, answerChat } from "../rag/inbox-qa.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
@@ -79,16 +79,33 @@ function limited(bucket: string) {
 
 // ---------- grounded Q&A ----------
 app.post("/api/ask", limited("ask"), async (c) => {
-  const { question } = await c.req.json<{ question?: string }>();
+  const { question, speak } = await c.req.json<{ question?: string; speak?: boolean }>();
   if (!question?.trim()) return c.json({ error: "question is required" }, 400);
   const tenantId = c.get("tenant").id;
   const q = question.trim();
-  // Route inbox questions to the inbox; everything else to the document copilot.
+  // Route greetings/meta to chat, inbox questions to the inbox, else the doc copilot.
   const intent = await classifyIntent(q);
-  const result = intent === "inbox" ? await answerInbox(tenantId, q) : await answer(tenantId, q);
+  const result =
+    intent === "chat"
+      ? await answerChat(q)
+      : intent === "inbox"
+        ? await answerInbox(tenantId, q)
+        : await answer(tenantId, q);
+  // Speak the reply when the client asks and voice is configured (typed answers
+  // get a spoken reply too, not just the mic path).
+  let audio: string | null = null;
+  if (speak && voiceConfigured()) {
+    const spoken = result.answerable ? result.answer : "I can't find that in your documents.";
+    try {
+      audio = (await synthesize(spoken)).toString("base64");
+    } catch (e) {
+      console.error("[ask] tts failed:", e instanceof Error ? e.message : e);
+    }
+  }
   return c.json({
     answerable: result.answerable,
     answer: result.answer,
+    audio,
     citations: result.cited_sources
       .map((n) => {
         const s = result.sources[n - 1];
@@ -251,8 +268,13 @@ app.post("/api/voice", limited("ask"), async (c) => {
   if (!transcript) return c.json({ transcript: "", answer: "", answerable: false, citations: [], audio: null });
 
   const intent = await classifyIntent(transcript);
-  const result = intent === "inbox" ? await answerInbox(tenantId, transcript) : await answer(tenantId, transcript);
-  const spoken = result.answerable ? result.answer : "I can't find this in your documents.";
+  const result =
+    intent === "chat"
+      ? await answerChat(transcript)
+      : intent === "inbox"
+        ? await answerInbox(tenantId, transcript)
+        : await answer(tenantId, transcript);
+  const spoken = result.answerable ? result.answer : "I can't find that in your documents.";
   let audioB64: string | null = null;
   try {
     audioB64 = (await synthesize(spoken)).toString("base64");

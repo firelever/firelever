@@ -81,7 +81,7 @@ function modeUniform(m: OrbMode): number {
   return 0;
 }
 
-export function Orb({ theme, mode, level, name = "LEVI" }: { theme: ThemeName; mode: OrbMode; level: number; name?: string }) {
+export function Orb({ theme, mode, level, name = "LEVI", idleLabel = "READY" }: { theme: ThemeName; mode: OrbMode; level: number; name?: string; idleLabel?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ theme, mode, level });
@@ -158,7 +158,7 @@ export function Orb({ theme, mode, level, name = "LEVI" }: { theme: ThemeName; m
       <canvas ref={canvasRef} width={300} height={300} style={{ width: 146, height: 146, filter: "var(--orbShadow)" }} />
       <div className="orb-status">
         <span className="dot" style={{ background: DOT[mode], animation: "blink 1.6s infinite" }} />
-        {name} · {LABEL[mode]}
+        {name} · {mode === "muted" ? idleLabel : LABEL[mode]}
       </div>
       <canvas ref={waveRef} width={150} height={28} style={{ width: 150, height: 28 }} />
       <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
