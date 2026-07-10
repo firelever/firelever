@@ -1,11 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "copilot",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "serve"],
-      "port": 8787
-    }
+    { "name": "copilot", "runtimeExecutable": "npm", "runtimeArgs": ["run", "serve"], "port": 8787 },
+    { "name": "levi", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "frontend", "run", "dev"], "port": 5173 }
   ]
 }

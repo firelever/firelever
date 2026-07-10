@@ -12,3 +12,7 @@ dashboard.html
 .claude/settings.local.json
 finetune/*.gguf
 finetune/.pod.json
+frontend/node_modules
+web-dist
+proto.zip
+.proto

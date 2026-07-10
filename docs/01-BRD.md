@@ -112,6 +112,13 @@ one-time and/or copilot subscription ~$99-299/mo per SMB.
 Audit as the entry offer; $199/mo copilot subscription offered to audit customers
 afterward. Validate with the first design partners.
 
+**Product-surface amendment (2026-07-09):** the copilot is being rebuilt to the
+voice-first "Levi" dashboard (ADR-013, PRD §7). This raises the product's demo and
+sales ceiling and adds two run-cost lines — voice (Deepgram STT + ElevenLabs TTS,
+per-minute) and an always-on frontend. Voice is metered to the copilot surface;
+budget impact monitored against the $100/mo ceiling, revisited if a design partner
+uses voice heavily.
+
 ## 11. Gate decision
 
 **2026-07-07 — GO.** Decided by Peter. Open items resolved: first revenue 2026-10-31,

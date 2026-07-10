@@ -84,6 +84,36 @@ on-prem, model pretraining.
 | 5 | Customer-facing MCP (S2) + first design partner onboarding | Productization |
 | 6 | Fine-tune + benchmark writeup (S3) | Model training story |
 
+Slices 1-6 shipped. Post-6, the product also gained OCR (ADR-007/009), adaptive
+retrieval (ADR-008), a deployed tenant-authenticated web app (ADR-005), and a live
+inbox watcher with attachment ingestion, ask-about-inbox, and cleanup
+(ADR-010/011/012).
+
+## 7. Levi — voice-first dashboard (amendment, 2026-07-09)
+
+The copilot's product surface is being rebuilt to the "Levi" design (ADR-013): a
+voice-first desktop dashboard with a WebGL presence orb, a stacked window stage, a
+live conversation panel, five themes, and an approve/undo contract on every action.
+
+**Scope (Peter's call — shell + real windows + voice):**
+- **Real windows** (wired to existing backends): Answer (RAG + citations), Inbox
+  (drafts + approve/undo), Contract redlines, Sheet analysis; Tasks/Schedule/Notes as
+  stored state.
+- **Voice** (M-new): browser mic → Deepgram STT → existing `answer()` → ElevenLabs
+  TTS. Claude stays the brain. Latency target < 2s end-of-speech to first audio.
+- **Preview stubs** (clearly labeled, non-functional): Flight, Lunch, Code PR, Slack,
+  Weather/Stocks — each a real integration deferred; shown as previews so demos read
+  complete without implying capability that isn't wired.
+
+**New non-functional requirements:** voice keys server-side (browser gets short-lived
+tokens); the approve/undo contract must defer the real side effect until the undo
+window expires; stubs must be visibly labeled "preview."
+
+**Build order (Levi slices):** L1 shell + themes + window stage → L2 WebGL orb + voice
+states → L3 voice pipeline (STT/Claude/TTS) → L4 wire Answer + Inbox to real backends
+→ L5 Tasks/Schedule/Notes + Contract/Sheet → L6 preview stubs + approve/undo polish.
+Each slice is independently demoable.
+
 ## 7. Gate decision
 
 **2026-07-07 — GO.** Decided by Peter (build approval given same day as BRD).
