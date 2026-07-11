@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS inbound_emails (
 for (const [col, def] of [
   ["attachments_ingested", "INTEGER DEFAULT 0"],
   ["attachments_json", "TEXT"],
+  ["sent_at", "TEXT"], // when the approved draft reply was actually emailed
 ]) {
   try {
     db.exec(`ALTER TABLE inbound_emails ADD COLUMN ${col} ${def}`);
@@ -59,6 +60,7 @@ export interface InboundEmail {
   status: string;
   attachments_ingested: number | null;
   attachments_json: string | null;
+  sent_at: string | null;
   created_at: string;
   updated_at: string;
 }

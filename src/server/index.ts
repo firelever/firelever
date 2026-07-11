@@ -231,7 +231,7 @@ app.post("/api/triage/:id/verdict", async (c) => {
       return c.json({ error: "sending the reply failed; verdict not recorded" }, 502);
     }
   }
-  updateEmail(id, { status: verdict });
+  updateEmail(id, sent ? { status: verdict, sent_at: new Date().toISOString() } : { status: verdict });
   return c.json({ ok: true, status: verdict, sent });
 });
 

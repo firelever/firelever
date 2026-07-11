@@ -118,7 +118,7 @@ export async function streamVoiceReply(
   } else if (intent === "inbox") {
     const rows = db
       .prepare(
-        `SELECT id, from_addr, subject, body, draft_reply, category, urgency, needs_reply, status, received_at
+        `SELECT id, from_addr, subject, body, draft_reply, category, urgency, needs_reply, status, sent_at, received_at
          FROM inbound_emails WHERE tenant_id = ? ORDER BY id DESC LIMIT 200`
       )
       .all(tenantId) as {
@@ -131,6 +131,7 @@ export async function streamVoiceReply(
       urgency: string | null;
       needs_reply: number | null;
       status: string;
+      sent_at: string | null;
       received_at: string | null;
     }[];
     const table = rows
@@ -160,7 +161,13 @@ export async function streamVoiceReply(
           `[${r.id}] From: ${r.from_addr} | Subject: "${r.subject}" | ${r.received_at?.slice(0, 10) ?? "?"}\n` +
           `Body: ${clean(r.body).slice(0, 700) || "(empty)"}` +
           (r.draft_reply
-            ? `\nLevi's drafted reply (${r.status === "drafted" ? "awaiting approval in the Replies window" : "verdict: " + r.status}): ${clean(r.draft_reply).slice(0, 400)}`
+            ? `\nLevi's drafted reply (${
+                r.sent_at
+                  ? `SENT on ${r.sent_at.slice(0, 10)}`
+                  : r.status === "drafted"
+                    ? "awaiting approval in the Replies window"
+                    : `verdict ${r.status} but NOT sent — never claim it was sent`
+              }): ${clean(r.draft_reply).slice(0, 400)}`
             : "")
       )
       .join("\n\n");
@@ -168,8 +175,10 @@ export async function streamVoiceReply(
       "You are Levi, answering out loud about the user's email inbox using ONLY the data provided. " +
       "The table lists every email; full content follows for the recent and relevant ones. When asked to read " +
       "an email, read its body naturally, summarizing boilerplate. Some emails have a drafted reply awaiting " +
-      "approval in the Replies window; mention that when relevant. If asked about an email whose body isn't " +
-      "included, say you can pull it up if they name the sender. " +
+      "approval in the Replies window; mention that when relevant. A reply left the building ONLY if it is " +
+      "marked SENT with a date; a verdict of approved does not mean it was sent, so never claim or imply an " +
+      "unsent reply went out. If asked about an email whose body isn't included, say you can pull it up if " +
+      "they name the sender. " +
       SPEAK;
     userContent = rows.length
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`

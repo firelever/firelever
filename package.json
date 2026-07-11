@@ -25,7 +25,8 @@
     "corpus": "tsx src/finetune/generate-corpus.ts",
     "gpu": "tsx src/finetune/gpu.ts",
     "eval:student": "tsx src/finetune/eval-student.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "requeue": "tsx src/triage/requeue-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
