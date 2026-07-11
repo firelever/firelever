@@ -44,6 +44,7 @@ export const api = {
   redlines: () => req<RedlineResult>("/redlines", { method: "POST" }),
   voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
   voiceText: (text: string) => req<{ answer: string; audio: string | null }>("/voice/text", { method: "POST", body: JSON.stringify({ text }) }),
+  uiContext: () => req<UiCtx>("/ui/context"),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
   convaiToken: () => req<{ token: string; agentId: string }>("/convai/token"),
   voice: async (blob: Blob): Promise<VoiceResult> => {
@@ -58,6 +59,9 @@ export const api = {
 };
 
 export interface VoiceResult { transcript: string; answerable: boolean; answer: string; citations: { n: number; document: string; heading: string | null }[]; audio: string | null }
+
+export interface UiEmail { id: number; from_addr: string; subject: string; received_at: string | null; body: string; draft_reply: string | null; status: string; sent_at: string | null }
+export interface UiCtx { seq: number; window: string | null; email?: UiEmail | null }
 
 export interface WsItem { id: number; kind: string; title: string; body: string | null; done: number; at: string | null }
 export interface Redline { clause: string; concern: string; old_text: string; suggested_text: string }

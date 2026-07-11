@@ -10,6 +10,7 @@ import { search } from "./retrieval.js";
 import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
+import { publishUiContext, UiEmail } from "../server/ui-context.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -52,11 +53,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     if (a.type === "send_reply") {
       const row = db
         .prepare(
-          `SELECT id, from_addr, subject, draft_reply, message_id, sent_at FROM inbound_emails
+          `SELECT id, from_addr, subject, body, received_at, draft_reply, status, message_id, sent_at FROM inbound_emails
            WHERE id = ? AND tenant_id = ?`
         )
         .get(a.email_id, tenantId) as
-        | { id: number; from_addr: string; subject: string; draft_reply: string | null; message_id: string | null; sent_at: string | null }
+        | (UiEmail & { message_id: string | null })
         | undefined;
       if (!row) return "I couldn't find that email, so nothing was sent.";
       if (row.sent_at) return "That reply already went out earlier, so I didn't send it again.";
@@ -64,16 +65,22 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!body) return "There's no drafted reply on that email, so nothing was sent.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
       await sendReply({ from_addr: row.from_addr, subject: row.subject, draft_reply: body, message_id: row.message_id });
-      updateEmail(row.id, { status: "approved", sent_at: new Date().toISOString(), draft_reply: body });
+      const sentAt = new Date().toISOString();
+      updateEmail(row.id, { status: "approved", sent_at: sentAt, draft_reply: body });
+      publishUiContext(tenantId, "inbox", { ...row, body: row.body.slice(0, 1200), draft_reply: body, status: "approved", sent_at: sentAt });
       return null;
     }
     if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
       if (!a.title?.trim()) return "I didn't catch what to add, so nothing was saved.";
-      createItem(tenantId, a.type.slice(4), a.title.trim(), a.body?.trim() || undefined, a.at?.trim() || undefined);
+      const kind = a.type.slice(4);
+      createItem(tenantId, kind, a.title.trim(), a.body?.trim() || undefined, a.at?.trim() || undefined);
+      publishUiContext(tenantId, kind === "task" ? "tasks" : kind === "event" ? "schedule" : "notes");
       return null;
     }
     if (a.type === "complete_task") {
-      return updateItem(tenantId, a.id, { done: 1 }) ? null : "I couldn't find that task, so nothing was checked off.";
+      const ok = updateItem(tenantId, a.id, { done: 1 });
+      if (ok) publishUiContext(tenantId, "tasks");
+      return ok ? null : "I couldn't find that task, so nothing was checked off.";
     }
     return "I don't know how to do that yet, so nothing happened.";
   } catch (e) {
@@ -163,6 +170,12 @@ export async function streamVoiceReply(
     const tasks = fmt("task");
     const notes = fmt("note");
     const today = new Date().toISOString().slice(0, 10);
+    // Surface the specific workspace window under discussion.
+    const wsText = (question + " " + history.slice(-2).map((h) => h.text).join(" ")).toLowerCase();
+    publishUiContext(
+      tenantId,
+      /\b(tasks?|to-?dos?|check(ed)? off|reminders?)\b/.test(wsText) ? "tasks" : /\bnotes?\b/.test(wsText) ? "notes" : "schedule"
+    );
     system =
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
@@ -211,6 +224,24 @@ export async function streamVoiceReply(
       return qWords.some((w) => hay.includes(w));
     });
     const drafted = rows.filter((r) => r.draft_reply);
+    // Surface the email under discussion in the inbox window, content included.
+    const focus = matches[0] ?? drafted.find((r) => r.status === "drafted") ?? rows[0];
+    publishUiContext(
+      tenantId,
+      "inbox",
+      focus
+        ? {
+            id: focus.id,
+            from_addr: focus.from_addr,
+            subject: focus.subject,
+            received_at: focus.received_at,
+            body: clean(focus.body).slice(0, 1200),
+            draft_reply: focus.draft_reply,
+            status: focus.status,
+            sent_at: focus.sent_at,
+          }
+        : null
+    );
     const detail = [...new Map([...rows.slice(0, 6), ...drafted.slice(0, 4), ...matches.slice(0, 5)].map((r) => [r.id, r])).values()]
       .map(
         (r) =>
@@ -241,6 +272,7 @@ export async function streamVoiceReply(
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
+    publishUiContext(tenantId, "answer");
     // For terse follow-ups, enrich the retrieval query with the previous user
     // turn so hybrid search has something to bite on.
     const prevUser = [...history].reverse().find((h) => h.role === "user")?.text ?? "";

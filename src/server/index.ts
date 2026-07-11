@@ -19,6 +19,7 @@ import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
+import { getUiContext } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
@@ -317,6 +318,13 @@ app.post("/api/voice", limited("ask"), async (c) => {
       : [],
     audio: audioB64,
   });
+});
+
+// ---------- real-time UI context: what the voice conversation is about ----------
+// The voice brain publishes a context event per turn (window + entity); the
+// frontend polls this and follows along, surfacing the matching window live.
+app.get("/api/ui/context", (c) => {
+  return c.json(getUiContext(c.get("tenant").id) ?? { seq: 0, window: null, email: null });
 });
 
 // ---------- Free-STT voice: browser does speech-to-text, we ground + speak ----------

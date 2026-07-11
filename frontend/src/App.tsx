@@ -4,7 +4,7 @@ import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
 
@@ -35,6 +35,8 @@ export function App() {
   const [notes, setNotes] = useState<WsItem[]>([]);
   const [redlines, setRedlines] = useState<RedlineResult | null>(null);
   const [redlinesBusy, setRedlinesBusy] = useState(false);
+  const [focusEmail, setFocusEmail] = useState<UiEmail | null>(null);
+  const uiSeqRef = useRef(0);
   const [mode, setMode] = useState<OrbMode>("muted");
   const [level, setLevel] = useState(0);
   const [voiceReady, setVoiceReady] = useState(false);
@@ -147,6 +149,28 @@ export function App() {
   };
   useEffect(() => { if (authed) loadWorkspace(); }, [authed]);
 
+  // Follow the voice conversation in real time: the brain publishes which
+  // window (and which email) it's discussing; surface it as it speaks.
+  useEffect(() => {
+    if (!authed) return;
+    const t = setInterval(() => {
+      api
+        .uiContext()
+        .then((ctx) => {
+          if (!ctx.seq || ctx.seq === uiSeqRef.current) return;
+          uiSeqRef.current = ctx.seq;
+          if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
+          if (ctx.window) {
+            promote(ctx.window);
+            if (ctx.window === "inbox") loadTriage();
+            else if (ctx.window === "tasks" || ctx.window === "schedule" || ctx.window === "notes") loadWorkspace();
+          }
+        })
+        .catch(() => {});
+    }, 1200);
+    return () => clearInterval(t);
+  }, [authed]);
+
   const toggleTask = async (t: WsItem) => { await api.setItem(t.id, { done: t.done ? 0 : 1 }).catch(() => {}); loadWorkspace(); };
   const addItem = async (kind: "task" | "event" | "note", title: string, at?: string) => {
     if (!title.trim()) return;
@@ -253,20 +277,42 @@ export function App() {
       );
     }
     if (id === "inbox") {
-      if (queue.length === 0) return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>Inbox clear — Levi will draft replies as mail arrives.</div>;
       const d = queue[0];
+      // Skip the focused email when it's the same one awaiting approval below.
+      const fe = focusEmail && (!d || focusEmail.id !== d.id) ? focusEmail : null;
+      if (!fe && !d) return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>Inbox clear — Levi will draft replies as mail arrives.</div>;
       return (
         <div>
-          <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>{d.subject}</div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginBottom: 8 }}>to {d.from} · {d.category}{d.confident ? "" : " · low confidence"}</div>
-            <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.5, maxHeight: 96, overflow: "hidden" }}>{d.draft}</div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div onClick={() => verdict(d.id, "approved")} style={{ flex: 1, textAlign: "center", padding: 10, borderRadius: 11, cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, background: "rgba(48,209,88,0.16)", border: "1px solid rgba(48,209,88,0.34)", color: "var(--ok)" }}>APPROVE</div>
-            <div onClick={() => verdict(d.id, "rejected")} style={{ flex: 1, textAlign: "center", padding: 10, borderRadius: 11, cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, border: "1px solid rgba(var(--lineRGB),0.16)", color: "var(--mut)" }}>REJECT</div>
-          </div>
-          {queue.length > 1 && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--warn)", marginTop: 10 }}>{queue.length} AWAITING</div>}
+          {fe && (
+            <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>{fe.subject}</div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginBottom: 8 }}>
+                from {fe.from_addr}{fe.received_at ? " · " + fe.received_at.slice(0, 10) : ""}
+                {fe.sent_at ? <span style={{ color: "var(--ok)" }}> · REPLIED {fe.sent_at.slice(0, 10)}</span> : null}
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.55, maxHeight: 150, overflowY: "auto" }}>{fe.body}</div>
+              {fe.draft_reply && !fe.sent_at && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(var(--lineRGB),0.12)", fontSize: 12, color: "var(--mut2)", lineHeight: 1.5, maxHeight: 76, overflow: "hidden" }}>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em", color: "var(--lab)" }}>DRAFT · </span>
+                  {fe.draft_reply}
+                </div>
+              )}
+            </div>
+          )}
+          {d && (
+            <>
+              <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10 }}>
+                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>{d.subject}</div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginBottom: 8 }}>to {d.from} · {d.category}{d.confident ? "" : " · low confidence"}</div>
+                <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.5, maxHeight: 96, overflow: "hidden" }}>{d.draft}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div onClick={() => verdict(d.id, "approved")} style={{ flex: 1, textAlign: "center", padding: 10, borderRadius: 11, cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, background: "rgba(48,209,88,0.16)", border: "1px solid rgba(48,209,88,0.34)", color: "var(--ok)" }}>APPROVE</div>
+                <div onClick={() => verdict(d.id, "rejected")} style={{ flex: 1, textAlign: "center", padding: 10, borderRadius: 11, cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12, border: "1px solid rgba(var(--lineRGB),0.16)", color: "var(--mut)" }}>REJECT</div>
+              </div>
+              {queue.length > 1 && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--warn)", marginTop: 10 }}>{queue.length} AWAITING</div>}
+            </>
+          )}
         </div>
       );
     }
