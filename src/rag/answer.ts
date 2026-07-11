@@ -13,6 +13,7 @@ import { MODEL } from "../config.js";
 import { getEmbedder } from "./embeddings.js";
 import { search, Hit } from "./retrieval.js";
 import { rerank } from "./rerank.js";
+import { memoryBlock } from "./memory.js";
 import db from "./store.js";
 
 export const PROMPT_VERSION = "qa-v3-ocr-aware";
@@ -95,7 +96,7 @@ async function answerOverSources(
         model: MODEL,
         max_tokens: 16000,
         thinking: { type: "adaptive" },
-        system: SYSTEM,
+        system: SYSTEM + memoryBlock(tenantId),
         messages: [{ role: "user", content: `<sources>\n${block}\n</sources>\n\nQuestion: ${question}` }],
         output_config: { format: zodOutputFormat(AnswerSchema) },
       },
@@ -137,7 +138,7 @@ async function answerAgentic(tenantId: string, question: string): Promise<Ground
       },
     },
   ];
-  const system = `${SYSTEM}
+  const system = `${SYSTEM}${memoryBlock(tenantId)}
 
 You have a search_knowledge tool. Search as many times as needed (different queries for different parts of a multi-part question) before answering. When ready, give the final answer citing [n] against the numbered passages. If the documents do not contain the answer, reply with exactly: NOT_FOUND`;
 

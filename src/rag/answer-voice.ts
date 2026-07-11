@@ -11,6 +11,7 @@ import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
 import { publishUiContext, UiEmail } from "../server/ui-context.js";
+import { addMemory, memoryBlock } from "./memory.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -37,15 +38,19 @@ const SPEAK =
 type Action =
   | { type: "send_reply"; email_id: number; body?: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
-  | { type: "complete_task"; id: number };
+  | { type: "complete_task"; id: number }
+  | { type: "remember"; note: string };
 
 const ACTIONS =
   " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
   '<<action:{"type":"send_reply","email_id":ID}>> sends that email\'s drafted reply (add "body":"..." only when the user asked to change what it says). ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
+  '<<action:{"type":"remember","note":"..."}>> permanently saves a fact — use it WHENEVER the user corrects you ' +
+  "(a name, a spelling, a number, a preference) or confirms which of two conflicting readings is right; the note " +
+  'should state the correct fact and the wrong variant, e.g. "The buyer entity is BDLP Enterprises LLC; OCR sometimes misreads it as BRLP". ' +
   "The system executes the tag before your words are spoken, so phrase the confirmation as already done. " +
-  "NEVER say you sent, added, completed, or scheduled anything without its action tag. For anything outside these actions, say you can't do that yet.";
+  "NEVER say you sent, added, completed, scheduled, or remembered anything without its action tag. For anything outside these actions, say you can't do that yet.";
 
 // Returns a spoken failure sentence, or null when the action succeeded.
 async function executeAction(tenantId: string, a: Action): Promise<string | null> {
@@ -81,6 +86,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       const ok = updateItem(tenantId, a.id, { done: 1 });
       if (ok) publishUiContext(tenantId, "tasks");
       return ok ? null : "I couldn't find that task, so nothing was checked off.";
+    }
+    if (a.type === "remember") {
+      if (!a.note?.trim()) return "I didn't catch what to remember, so nothing was saved.";
+      addMemory(tenantId, a.note);
+      return null;
     }
     return "I don't know how to do that yet, so nothing happened.";
   } catch (e) {
@@ -146,6 +156,7 @@ export async function streamVoiceReply(
     .map((h) => `${h.role}: ${h.text.slice(0, 300)}`)
     .join("\n");
   const convoBlock = convo ? `Conversation so far:\n${convo}\n\n` : "";
+  const MEM = memoryBlock(tenantId);
 
   let system: string;
   let userContent: string;
@@ -154,7 +165,9 @@ export async function streamVoiceReply(
     system =
       "You are Levi, a warm, concise voice operations copilot for FireLever. " +
       "If asked what you can do, mention answering questions about their documents, contracts, inbox, and schedule. " +
-      SPEAK;
+      SPEAK +
+      ACTIONS +
+      MEM;
     userContent = `${convoBlock}User says: ${question}`;
   } else if (intent === "workspace") {
     const fmt = (kind: "task" | "event" | "note") =>
@@ -181,7 +194,8 @@ export async function streamVoiceReply(
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
       "and offer to add an item. " +
       SPEAK +
-      ACTIONS;
+      ACTIONS +
+      MEM;
     userContent =
       `${convoBlock}Today's date: ${today}\n\nEvents:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
@@ -225,7 +239,9 @@ export async function streamVoiceReply(
     });
     const drafted = rows.filter((r) => r.draft_reply);
     // Surface the email under discussion in the inbox window, content included.
-    const focus = matches[0] ?? drafted.find((r) => r.status === "drafted") ?? rows[0];
+    // Only when something actually matches — never fall back to "most recent
+    // email", which surfaces a random newsletter out of context.
+    const focus = matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
     publishUiContext(
       tenantId,
       "inbox",
@@ -267,7 +283,8 @@ export async function streamVoiceReply(
       "unsent reply went out. If asked about an email whose body isn't included, say you can pull it up if " +
       "they name the sender. " +
       SPEAK +
-      ACTIONS;
+      ACTIONS +
+      MEM;
     userContent = rows.length
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
@@ -286,77 +303,101 @@ export async function streamVoiceReply(
       "several are irrelevant, so rely on the ones that actually answer the question and ignore the rest. " +
       "Do not read source numbers or citation markers aloud. If none of the sources contain the answer, " +
       "say you couldn't find it in their documents. " +
-      SPEAK;
+      "The documents are scanned, so OCR can misread names and numbers (letters like R and D are commonly " +
+      "confused). When MEMORY confirms a reading, always use it. When sources disagree on a name or number " +
+      "and MEMORY is silent, prefer the reading that appears most consistently, mention the discrepancy " +
+      "briefly, and if the user confirms which is right, remember it. " +
+      SPEAK +
+      ACTIONS +
+      MEM;
     userContent = hits.length
       ? `${convoBlock}<sources>\n${block}\n</sources>\n\nQuestion: ${question}`
       : `${convoBlock}No sources found.\n\nQuestion: ${question}`;
   }
 
-  const stream = client.messages.stream({
-    model: VOICE_MODEL,
-    max_tokens: 400,
-    thinking: { type: "disabled" }, // no thinking → fast first token for speech
-    system,
-    messages: [{ role: "user", content: userContent }],
-  });
+  // Track whether any speech left the server: a failure before the first word
+  // can be retried transparently; after that, the error must surface.
+  let emitted = false;
+  const emit = async (t: string) => {
+    emitted = true;
+    await onDelta(t);
+  };
 
-  // Action-aware streaming: when the reply opens with an action tag, hold the
-  // stream, execute the action FIRST, then let the confirmation speak. On
-  // failure, speak the failure instead of the model's premature confirmation.
-  const HEAD = "<<action:";
-  let mode: "detect" | "collect" | "pass" = intent === "inbox" || intent === "workspace" ? "detect" : "pass";
-  let buf = "";
-  for await (const ev of stream) {
-    if (ev.type !== "content_block_delta" || ev.delta.type !== "text_delta") continue;
-    const t = ev.delta.text;
-    if (mode === "pass") {
-      await onDelta(t);
-      continue;
-    }
-    buf += t;
-    if (mode === "detect") {
-      if (buf.length < HEAD.length) {
-        if (HEAD.startsWith(buf)) continue; // still could be a tag
-        mode = "pass";
-        await onDelta(buf);
-        buf = "";
+  const runOnce = async (): Promise<void> => {
+    const stream = client.messages.stream({
+      model: VOICE_MODEL,
+      max_tokens: 400,
+      thinking: { type: "disabled" }, // no thinking → fast first token for speech
+      system,
+      messages: [{ role: "user", content: userContent }],
+    });
+
+    // Action-aware streaming: when the reply opens with an action tag, hold the
+    // stream, execute the action FIRST, then let the confirmation speak. On
+    // failure, speak the failure instead of the model's premature confirmation.
+    const HEAD = "<<action:";
+    let mode: "detect" | "collect" | "pass" = "detect";
+    let buf = "";
+    for await (const ev of stream) {
+      if (ev.type !== "content_block_delta" || ev.delta.type !== "text_delta") continue;
+      const t = ev.delta.text;
+      if (mode === "pass") {
+        await emit(t);
         continue;
       }
-      if (buf.startsWith(HEAD)) mode = "collect";
-      else {
-        mode = "pass";
-        await onDelta(buf);
-        buf = "";
-        continue;
-      }
-    }
-    if (mode === "collect") {
-      const end = buf.indexOf(">>");
-      if (end < 0) {
-        if (buf.length > 1500) {
-          // runaway tag; bail out and just speak it
+      buf += t;
+      if (mode === "detect") {
+        if (buf.length < HEAD.length) {
+          if (HEAD.startsWith(buf)) continue; // still could be a tag
           mode = "pass";
-          await onDelta(buf);
+          await emit(buf);
           buf = "";
+          continue;
         }
-        continue;
+        if (buf.startsWith(HEAD)) mode = "collect";
+        else {
+          mode = "pass";
+          await emit(buf);
+          buf = "";
+          continue;
+        }
       }
-      const raw = buf.slice(HEAD.length, end);
-      const rest = buf.slice(end + 2).replace(/^\s+/, "");
-      buf = "";
-      mode = "pass";
-      let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
-      try {
-        failure = await executeAction(tenantId, JSON.parse(raw) as Action);
-      } catch {
-        /* failure message stands */
+      if (mode === "collect") {
+        const end = buf.indexOf(">>");
+        if (end < 0) {
+          if (buf.length > 1500) {
+            // runaway tag; bail out and just speak it
+            mode = "pass";
+            await emit(buf);
+            buf = "";
+          }
+          continue;
+        }
+        const raw = buf.slice(HEAD.length, end);
+        const rest = buf.slice(end + 2).replace(/^\s+/, "");
+        buf = "";
+        mode = "pass";
+        let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
+        try {
+          failure = await executeAction(tenantId, JSON.parse(raw) as Action);
+        } catch {
+          /* failure message stands */
+        }
+        if (failure) {
+          await emit(failure);
+          return; // suppress the model's now-false confirmation
+        }
+        if (rest) await emit(rest);
       }
-      if (failure) {
-        await onDelta(failure);
-        return; // suppress the model's now-false confirmation
-      }
-      if (rest) await onDelta(rest);
     }
+    if (buf && mode !== "pass") await emit(buf); // stream ended mid-detect
+  };
+
+  try {
+    await runOnce();
+  } catch (e) {
+    if (emitted) throw e; // partial speech already out — don't double-speak
+    await new Promise((r) => setTimeout(r, 600));
+    await runOnce(); // one transparent retry for transient API failures
   }
-  if (buf && mode !== "pass") await onDelta(buf); // stream ended mid-detect
 }
