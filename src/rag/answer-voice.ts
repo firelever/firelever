@@ -142,19 +142,26 @@ export async function streamVoiceReply(
       .join("\n");
     // Full content for the emails the user is most likely asking about, so
     // Levi can actually read a message (or its drafted reply) aloud: the most
-    // recent few, plus any whose sender/subject matches words in the question.
+    // recent few, every email that has a drafted reply (those are what
+    // follow-ups like "read that draft" refer to), plus any whose
+    // sender/subject matches words from the conversation — the recent turns,
+    // not just the current utterance, since follow-ups are mostly pronouns.
     const clean = (s: string) => s.replace(/\s+/g, " ").trim();
-    const qWords = question.toLowerCase().split(/[^a-z0-9@.]+/).filter((w) => w.length > 3);
+    const qText = [question, ...history.slice(-4).map((h) => h.text)].join(" ").toLowerCase();
+    const qWords = qText.split(/[^a-z0-9@.]+/).filter((w) => w.length > 3);
     const matches = rows.filter((r) => {
       const hay = (r.from_addr + " " + r.subject).toLowerCase();
       return qWords.some((w) => hay.includes(w));
     });
-    const detail = [...new Map([...rows.slice(0, 6), ...matches.slice(0, 5)].map((r) => [r.id, r])).values()]
+    const drafted = rows.filter((r) => r.draft_reply);
+    const detail = [...new Map([...rows.slice(0, 6), ...drafted.slice(0, 4), ...matches.slice(0, 5)].map((r) => [r.id, r])).values()]
       .map(
         (r) =>
           `[${r.id}] From: ${r.from_addr} | Subject: "${r.subject}" | ${r.received_at?.slice(0, 10) ?? "?"}\n` +
           `Body: ${clean(r.body).slice(0, 700) || "(empty)"}` +
-          (r.draft_reply ? `\nLevi's drafted reply (awaiting approval): ${clean(r.draft_reply).slice(0, 400)}` : "")
+          (r.draft_reply
+            ? `\nLevi's drafted reply (${r.status === "drafted" ? "awaiting approval in the Replies window" : "verdict: " + r.status}): ${clean(r.draft_reply).slice(0, 400)}`
+            : "")
       )
       .join("\n\n");
     system =
