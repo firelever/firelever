@@ -46,9 +46,15 @@ const ACTIONS =
   '<<action:{"type":"send_reply","email_id":ID}>> sends that email\'s drafted reply (add "body":"..." only when the user asked to change what it says). ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
-  '<<action:{"type":"remember","note":"..."}>> permanently saves a fact — use it WHENEVER the user corrects you ' +
-  "(a name, a spelling, a number, a preference) or confirms which of two conflicting readings is right; the note " +
-  'should state the correct fact and the wrong variant, e.g. "The buyer entity is BDLP Enterprises LLC; OCR sometimes misreads it as BRLP". ' +
+  '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
+  "(a name, a spelling, a number, a preference); the note should state the correct fact and the wrong variant, " +
+  'e.g. "The buyer entity is BDLP Enterprises LLC; OCR sometimes misreads it as BRLP". ' +
+  "CALIBRATED DEFERENCE for corrections: accept and remember immediately when the correction concerns something " +
+  "the documents don't cover (names, preferences, context) or where the sources genuinely conflict (OCR ambiguity). " +
+  "But when the correction CONTRADICTS what the sources clearly and consistently show, do NOT remember it yet — " +
+  "push back politely with the specific evidence (where it appears and what it says) and ask them to confirm. " +
+  "If they then insist, remember it with both sides recorded, e.g. " +
+  '"User confirms the deposit is X, though the contract consistently shows Y". Never argue past one round; the user has final say. ' +
   "The system executes the tag before your words are spoken, so phrase the confirmation as already done. " +
   "NEVER say you sent, added, completed, scheduled, or remembered anything without its action tag. For anything outside these actions, say you can't do that yet.";
 
