@@ -3,6 +3,7 @@
 // that a fixed top-k drops. Falls back to the original order on any parse failure.
 import { z } from "zod";
 import { extract } from "../llm.js";
+import { FAST_MODEL } from "../config.js";
 import { Hit } from "./retrieval.js";
 
 const RankSchema = z.object({
@@ -21,7 +22,8 @@ export async function rerank(question: string, candidates: Hit[], topN: number):
       RankSchema,
       "rerank",
       `Rank these candidate passages by how well they help answer the question. Return their numbers, most relevant first. Question: "${question}"`,
-      list
+      list,
+      FAST_MODEL
     );
     const seen = new Set<number>();
     const ordered: Hit[] = [];

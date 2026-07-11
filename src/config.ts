@@ -39,7 +39,11 @@ and drafted by an agent system like the ones FireLever builds — that is the pr
 
 export const SCORE_THRESHOLD = 70; // leads scoring below this are parked, not drafted
 export const PROSPECTS_PER_RUN = 10; // keep runs small while calibrating
-export const MODEL = "claude-opus-4-8";
+// Quality model for grounded answers, drafts, and redlines; override via env.
+export const MODEL = process.env.MODEL ?? "claude-opus-4-8";
+// Fast model for mechanical work (reranking, intent/email classification):
+// ~5x cheaper than Opus per token, and these tasks don't need Opus.
+export const FAST_MODEL = process.env.FAST_MODEL ?? "claude-haiku-4-5";
 
 // Appended to every outbound email. CAN-SPAM requires a real physical address
 // and an opt-out — fill in the address before the first send.

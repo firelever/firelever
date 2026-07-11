@@ -80,12 +80,13 @@ export async function extract<T extends z.ZodType>(
   schema: T,
   name: string,
   instruction: string,
-  text: string
+  text: string,
+  model: string = MODEL
 ): Promise<z.infer<T>> {
   const response = await withDeadline(`extract(${name})`, (signal) =>
     client.messages.parse(
       {
-        model: MODEL,
+        model,
         max_tokens: 16000,
         messages: [
           {

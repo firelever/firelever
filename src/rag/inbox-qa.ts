@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { client, withDeadline, extract } from "../llm.js";
-import { MODEL } from "../config.js";
+import { MODEL, FAST_MODEL } from "../config.js";
 import db from "./store.js";
 import { GroundedAnswer } from "./answer.js";
 
@@ -23,7 +23,8 @@ export async function classifyIntent(question: string): Promise<"documents" | "i
       IntentSchema,
       "ask-intent",
       "Classify what this message is about: the user's email INBOX, their uploaded DOCUMENTS, or CHAT (a greeting, small talk, or a question about Levi the assistant itself).",
-      question
+      question,
+      FAST_MODEL
     );
     return r.target;
   } catch {
