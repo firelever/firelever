@@ -118,12 +118,15 @@ export async function streamVoiceReply(
   } else if (intent === "inbox") {
     const rows = db
       .prepare(
-        `SELECT from_addr, subject, category, urgency, needs_reply, status, received_at
+        `SELECT id, from_addr, subject, body, draft_reply, category, urgency, needs_reply, status, received_at
          FROM inbound_emails WHERE tenant_id = ? ORDER BY id DESC LIMIT 200`
       )
       .all(tenantId) as {
+      id: number;
       from_addr: string;
       subject: string;
+      body: string;
+      draft_reply: string | null;
       category: string | null;
       urgency: string | null;
       needs_reply: number | null;
@@ -133,16 +136,36 @@ export async function streamVoiceReply(
     const table = rows
       .map(
         (r) =>
-          `${r.received_at?.slice(0, 10) ?? "?"} | ${r.from_addr} | "${r.subject}" | ${r.category ?? "?"} | ` +
+          `[${r.id}] ${r.received_at?.slice(0, 10) ?? "?"} | ${r.from_addr} | "${r.subject}" | ${r.category ?? "?"} | ` +
           `urgency ${r.urgency ?? "?"} | needs_reply ${r.needs_reply ? "yes" : "no"} | ${r.status}`
       )
       .join("\n");
+    // Full content for the emails the user is most likely asking about, so
+    // Levi can actually read a message (or its drafted reply) aloud: the most
+    // recent few, plus any whose sender/subject matches words in the question.
+    const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+    const qWords = question.toLowerCase().split(/[^a-z0-9@.]+/).filter((w) => w.length > 3);
+    const matches = rows.filter((r) => {
+      const hay = (r.from_addr + " " + r.subject).toLowerCase();
+      return qWords.some((w) => hay.includes(w));
+    });
+    const detail = [...new Map([...rows.slice(0, 6), ...matches.slice(0, 5)].map((r) => [r.id, r])).values()]
+      .map(
+        (r) =>
+          `[${r.id}] From: ${r.from_addr} | Subject: "${r.subject}" | ${r.received_at?.slice(0, 10) ?? "?"}\n` +
+          `Body: ${clean(r.body).slice(0, 700) || "(empty)"}` +
+          (r.draft_reply ? `\nLevi's drafted reply (awaiting approval): ${clean(r.draft_reply).slice(0, 400)}` : "")
+      )
+      .join("\n\n");
     system =
-      "You are Levi, answering out loud about the user's email inbox using ONLY the table provided. " +
-      "Give concrete counts and names. If the table does not answer it, say you don't see that in the inbox. " +
+      "You are Levi, answering out loud about the user's email inbox using ONLY the data provided. " +
+      "The table lists every email; full content follows for the recent and relevant ones. When asked to read " +
+      "an email, read its body naturally, summarizing boilerplate. Some emails have a drafted reply awaiting " +
+      "approval in the Replies window; mention that when relevant. If asked about an email whose body isn't " +
+      "included, say you can pull it up if they name the sender. " +
       SPEAK;
     userContent = rows.length
-      ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nQuestion: ${question}`
+      ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
     // For terse follow-ups, enrich the retrieval query with the previous user
