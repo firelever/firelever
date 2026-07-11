@@ -400,6 +400,15 @@ const chatCompletions = async (c: any) => {
   const tenantId = tenant.id;
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const question = textOf(lastUser?.content).trim();
+  // Prior turns (excluding the current question) — used for intent stickiness
+  // and follow-up context ("yes, go by sender" stays about the inbox).
+  const history = messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role as "user" | "assistant", text: textOf(m.content).trim() }))
+    .filter((m) => m.text);
+  if (history.length && history[history.length - 1].role === "user" && history[history.length - 1].text === question) {
+    history.pop();
+  }
   const greeting = "I'm here. Ask me about your documents, your inbox, or a contract.";
 
   const id = "chatcmpl-" + randomUUID();
@@ -412,7 +421,7 @@ const chatCompletions = async (c: any) => {
       try {
         await streamVoiceReply(tenantId, question, (t) => {
           text += t;
-        });
+        }, history);
       } catch {
         text = "Sorry, I hit a problem pulling that up. Try again.";
       }
@@ -439,7 +448,7 @@ const chatCompletions = async (c: any) => {
     await s.write(frame({ role: "assistant" }));
     try {
       if (!question) await s.write(frame({ content: greeting }));
-      else await streamVoiceReply(tenantId, question, async (t) => { await s.write(frame({ content: t })); });
+      else await streamVoiceReply(tenantId, question, async (t) => { await s.write(frame({ content: t })); }, history);
     } catch (e) {
       console.error("[convai] stream failed:", e instanceof Error ? e.message : e);
       await s.write(frame({ content: "Sorry, I hit a problem pulling that up. Try again." }));

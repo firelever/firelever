@@ -2,30 +2,60 @@
 // The text UI uses answer.ts (Opus + structured output + citations) for max
 // quality; voice needs the first spoken word out in a few seconds or ElevenLabs
 // times out the turn. On the small prod CPU each model round-trip is ~2s, so
-// this path minimizes them: a keyword intent heuristic (no LLM), one hybrid
-// retrieval, and a single streaming answer call over a wide-but-truncated
-// candidate set (so the answer passage is included without a rerank round-trip).
+// this path minimizes them: keyword intent routing over the conversation (no
+// LLM call), one retrieval, and a single streaming answer call.
 import { client } from "../llm.js";
 import { getEmbedder } from "./embeddings.js";
 import { search } from "./retrieval.js";
+import { listItems } from "../workspace/store.js";
 import db from "./store.js";
 
-// Sonnet reads the sources for the spoken answer — enough comprehension to
-// handle nuance (e.g. "who represents the seller" = the listing agent, not a
-// lawyer) while still fast with thinking off. Haiku is the fallback override.
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
-const SPEAK = "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes.";
 
-// Instant intent routing — no model call. Errs toward documents, the common case.
-function routeIntent(q: string): "chat" | "inbox" | "docs" {
-  const s = q.toLowerCase().trim();
-  if (/\b(inbox|e-?mails?|reply|replies|sender|unread|mailbox|triage)\b/.test(s)) return "inbox";
+export interface VoiceTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+// Written text and spoken text are different registers: TTS reads "St." as
+// "Saint" and "@" as something odd, so the model must write words as they
+// should be SAID.
+const SPEAK =
+  "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes. " +
+  "Write the reply exactly as it should be spoken aloud: expand abbreviations (write Street not St., " +
+  "Avenue not Ave., Apartment not Apt.), read email addresses as 'name at domain dot com', and avoid " +
+  "symbols entirely: say 'at' not @, 'and' not &, 'percent' not %, and 'dollars' for $ amounts.";
+
+// Instant intent routing over the whole conversation, no model call. A turn
+// with no strong signal of its own ("yes, go by sender") sticks with the most
+// recent domain in the conversation instead of defaulting to documents.
+type Intent = "chat" | "inbox" | "docs" | "workspace";
+const WORKSPACE_RE = /\b(schedules?|calendars?|appointments?|meetings?|events?|tasks?|to-?dos?|notes?|reminders?)\b/;
+const INBOX_RE = /\b(inbox|e-?mails?|reply|replies|senders?|unread|mailbox|triage|newsletters?|spam)\b/;
+const DOCS_RE = /\b(documents?|contracts?|clauses?|agreements?|pdf|files?|polic(y|ies)|sellers?|buyers?|closing|deposit|price|propert(y|ies)|street|inspection|addend(um|a)|warranty)\b/;
+
+function strongSignal(s: string): Intent | null {
+  if (WORKSPACE_RE.test(s)) return "workspace";
+  if (INBOX_RE.test(s)) return "inbox";
+  if (DOCS_RE.test(s)) return "docs";
+  return null;
+}
+
+function routeIntent(question: string, history: VoiceTurn[]): Intent {
+  const s = question.toLowerCase().trim();
   if (
-    s.split(/\s+/).length <= 2 ||
+    (s.split(/\s+/).length <= 2 && !strongSignal(s)) ||
     /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))\b/.test(s) ||
     /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(s)
   )
     return "chat";
+  const own = strongSignal(s);
+  if (own) return own;
+  // No signal of its own: a follow-up. Stay in the conversation's last domain.
+  for (let i = history.length - 1; i >= 0; i--) {
+    const inherited = strongSignal(history[i].text.toLowerCase());
+    if (inherited) return inherited;
+  }
   return "docs";
 }
 
@@ -40,21 +70,51 @@ export async function warmVoice(): Promise<void> {
 }
 
 // Stream a grounded spoken reply; onDelta receives text as it generates.
+// history is the prior conversation (most recent last), used for intent
+// stickiness and so follow-up questions keep their context.
 export async function streamVoiceReply(
   tenantId: string,
   question: string,
-  onDelta: (t: string) => void | Promise<void>
+  onDelta: (t: string) => void | Promise<void>,
+  history: VoiceTurn[] = []
 ): Promise<void> {
-  const intent = routeIntent(question);
+  const intent = routeIntent(question, history);
+  const convo = history
+    .slice(-6)
+    .map((h) => `${h.role}: ${h.text.slice(0, 300)}`)
+    .join("\n");
+  const convoBlock = convo ? `Conversation so far:\n${convo}\n\n` : "";
+
   let system: string;
   let userContent: string;
 
   if (intent === "chat") {
     system =
       "You are Levi, a warm, concise voice operations copilot for FireLever. " +
-      "If asked what you can do, mention answering questions about their documents, contracts, and inbox. " +
+      "If asked what you can do, mention answering questions about their documents, contracts, inbox, and schedule. " +
       SPEAK;
-    userContent = question;
+    userContent = `${convoBlock}User says: ${question}`;
+  } else if (intent === "workspace") {
+    const fmt = (kind: "task" | "event" | "note") =>
+      listItems(tenantId, kind)
+        .map(
+          (i) =>
+            `- ${i.title}${i.at ? ` (at ${i.at})` : ""}${i.body ? ` — ${i.body.slice(0, 120)}` : ""}${
+              kind === "task" ? (i.done ? " [done]" : " [open]") : ""
+            }`
+        )
+        .join("\n");
+    const events = fmt("event");
+    const tasks = fmt("task");
+    const notes = fmt("note");
+    const today = new Date().toISOString().slice(0, 10);
+    system =
+      "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
+      "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
+      "and offer to add an item. " +
+      SPEAK;
+    userContent =
+      `${convoBlock}Today's date: ${today}\n\nEvents:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
     const rows = db
       .prepare(
@@ -82,13 +142,14 @@ export async function streamVoiceReply(
       "Give concrete counts and names. If the table does not answer it, say you don't see that in the inbox. " +
       SPEAK;
     userContent = rows.length
-      ? `Inbox (${rows.length} emails):\n${table}\n\nQuestion: ${question}`
-      : `The inbox is empty.\n\nQuestion: ${question}`;
+      ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nQuestion: ${question}`
+      : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
-    // One retrieval, one answer call. A wide candidate set (top 24) keeps recall
-    // high so the answer passage is present; short previews keep Haiku's input
-    // small and fast, and it picks the relevant sources itself.
-    const hits = await search(tenantId, question, 40, getEmbedder(), "hybrid").catch(() => []);
+    // For terse follow-ups, enrich the retrieval query with the previous user
+    // turn so hybrid search has something to bite on.
+    const prevUser = [...history].reverse().find((h) => h.role === "user")?.text ?? "";
+    const query = question.split(/\s+/).length < 5 && prevUser ? `${prevUser} ${question}` : question;
+    const hits = await search(tenantId, query, 40, getEmbedder(), "hybrid").catch(() => []);
     const block = hits
       .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 800)}`)
       .join("\n\n");
@@ -98,7 +159,9 @@ export async function streamVoiceReply(
       "Do not read source numbers or citation markers aloud. If none of the sources contain the answer, " +
       "say you couldn't find it in their documents. " +
       SPEAK;
-    userContent = hits.length ? `<sources>\n${block}\n</sources>\n\nQuestion: ${question}` : `No sources found.\n\nQuestion: ${question}`;
+    userContent = hits.length
+      ? `${convoBlock}<sources>\n${block}\n</sources>\n\nQuestion: ${question}`
+      : `${convoBlock}No sources found.\n\nQuestion: ${question}`;
   }
 
   const stream = client.messages.stream({
