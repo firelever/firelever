@@ -7,7 +7,7 @@ import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startFreeVoice, speechSupported, browserSpeak, looksLikeEcho, FreeVoiceHandle } from "./lib/freeVoice";
-import { loadKokoro, kokoroReady, kokoroSpeak } from "./lib/kokoro";
+import { loadKokoro, kokoroReady, kokoroStreamSpeak } from "./lib/kokoro";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -66,10 +66,15 @@ export function App() {
     lastRoleRef.current = "";
     setMode("hearing");
     promote("answer");
-    // Preload the free Kokoro voice so the first reply doesn't wait on it.
+    // Preload the free Kokoro voice in the background (with visible progress).
+    // Replies never wait on it — the browser voice covers until it's ready.
     if (!kokoroReady()) {
-      setMessages((m) => [...m, { role: "bot", text: "Getting my voice ready (one-time download)…" }]);
-      void loadKokoro().catch(() => {});
+      const tag = "Downloading my natural voice (one time)";
+      setMessages((m) => [...m, { role: "bot", text: `${tag}… 0%` }]);
+      const setTag = (text: string) => setMessages((m) => m.map((msg) => (msg.role === "bot" && msg.text.startsWith(tag) ? { ...msg, text } : msg)));
+      void loadKokoro((pct) => setTag(`${tag}… ${pct}%`))
+        .then(() => setTag("Natural voice ready."))
+        .catch(() => setTag("Couldn't load the natural voice; using the basic one."));
     }
 
     const isSpeaking = () => !!audioRef.current || !!speakStopRef.current;
@@ -82,7 +87,8 @@ export function App() {
       setMode("hearing");
     };
     // Speak with the best available voice: Liam (ElevenLabs) → Kokoro (free,
-    // natural) → browser voice (robotic last resort).
+    // natural, once its one-time download finished) → browser voice. Never
+    // block a reply waiting on the Kokoro download.
     const speak = async (ans: string, liamAudio: string | null) => {
       speakingTextRef.current = ans;
       setMode("responding");
@@ -90,16 +96,42 @@ export function App() {
         audioRef.current = playAudio(liamAudio, () => { audioRef.current = null; doneSpeaking(); });
         return;
       }
-      try {
-        const url = await kokoroSpeak(ans);
-        const a = new Audio(url);
-        audioRef.current = a;
-        a.onended = () => { URL.revokeObjectURL(url); if (audioRef.current === a) { audioRef.current = null; doneSpeaking(); } };
-        a.onerror = a.onended as any;
-        await a.play();
-      } catch {
-        speakStopRef.current = browserSpeak(ans, () => { speakStopRef.current = null; doneSpeaking(); });
+      if (kokoroReady()) {
+        try {
+          // Sentence-streamed playback: chunk 1 plays (~1s) while the rest
+          // still synthesizes. Barge-in cancels the queue and the generator.
+          const queue: string[] = [];
+          let playing = false;
+          let cancelled = false;
+          let genDone = false;
+          speakStopRef.current = () => {
+            cancelled = true;
+            queue.splice(0).forEach((u) => URL.revokeObjectURL(u));
+          };
+          const playNext = () => {
+            if (cancelled) return;
+            const url = queue.shift();
+            if (!url) {
+              playing = false;
+              if (genDone) { speakStopRef.current = null; doneSpeaking(); }
+              return;
+            }
+            playing = true;
+            const a = new Audio(url);
+            audioRef.current = a;
+            a.onended = () => { URL.revokeObjectURL(url); if (audioRef.current === a) audioRef.current = null; playNext(); };
+            a.onerror = a.onended as any;
+            void a.play();
+          };
+          await kokoroStreamSpeak(ans, (url) => { queue.push(url); if (!playing && !cancelled) playNext(); }, () => cancelled);
+          genDone = true;
+          if (!playing && !cancelled) { speakStopRef.current = null; doneSpeaking(); }
+          return;
+        } catch {
+          /* fall through to the browser voice */
+        }
       }
+      speakStopRef.current = browserSpeak(ans, () => { speakStopRef.current = null; doneSpeaking(); });
     };
 
     const handle = await startFreeVoice({
