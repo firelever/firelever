@@ -240,7 +240,10 @@ export async function streamVoiceReply(
       "please", "want", "wanna", "check", "look", "there", "they", "them", "were", "does", "with",
     ]);
     const qText = [question, ...history.slice(-4).map((h) => h.text)].join(" ").toLowerCase();
-    const qWords = qText.split(/[^a-z0-9@.]+/).filter((w) => w.length > 3 && !STOP.has(w));
+    const qWords = qText
+      .split(/[^a-z0-9@.]+/)
+      .map((w) => w.replace(/^[.@]+|[.@]+$/g, "")) // dots stay for fly.io, not sentence punctuation
+      .filter((w) => w.length > 3 && !STOP.has(w));
     const matches = rows.filter((r) => {
       const hay = (r.from_addr + " " + r.subject).toLowerCase();
       return qWords.some((w) => hay.includes(w));
