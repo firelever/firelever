@@ -231,8 +231,16 @@ export async function streamVoiceReply(
     // sender/subject matches words from the conversation — the recent turns,
     // not just the current utterance, since follow-ups are mostly pronouns.
     const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+    // Generic inbox vocabulary must not entity-match emails ("reply" would
+    // match every no-reply@ sender). Only distinctive words count.
+    const STOP = new Set([
+      "reply", "replies", "email", "emails", "mail", "inbox", "sender", "senders", "message", "messages",
+      "need", "needs", "read", "open", "show", "tell", "about", "what", "which", "that", "this", "have",
+      "drafted", "draft", "drafts", "send", "sent", "newsletter", "newsletters", "spam", "from", "subject",
+      "please", "want", "wanna", "check", "look", "there", "they", "them", "were", "does", "with",
+    ]);
     const qText = [question, ...history.slice(-4).map((h) => h.text)].join(" ").toLowerCase();
-    const qWords = qText.split(/[^a-z0-9@.]+/).filter((w) => w.length > 3);
+    const qWords = qText.split(/[^a-z0-9@.]+/).filter((w) => w.length > 3 && !STOP.has(w));
     const matches = rows.filter((r) => {
       const hay = (r.from_addr + " " + r.subject).toLowerCase();
       return qWords.some((w) => hay.includes(w));
