@@ -169,3 +169,33 @@ body {
 .spin { width: 14px; height: 14px; border: 2px solid rgba(var(--accRGB),0.25); border-top-color: var(--acc); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: rgba(var(--lineRGB), 0.12); border-radius: 4px; }
+
+/* ---- mobile (phones) ----
+   The desktop shell is a fixed 3-column grid with a 1120px minimum, which
+   overflows a phone. Below 780px: single column — header, orb, answer card,
+   chips, prompt bar. The rail and side panel are hidden; voice + the answer
+   card carry the experience. */
+@media (max-width: 780px) {
+  body { padding: 0; }
+  .shell {
+    display: flex; flex-direction: column;
+    min-width: 0; width: 100vw; height: 100dvh;
+    border-radius: 0;
+  }
+  .rail, .panel { display: none; }
+  .clock, .themedots, .kbd { display: none; }
+  .center { flex: 1; min-height: 0; }
+  .orb-assembly { top: 10px; }
+  .card {
+    width: calc(100vw - 24px);
+    left: calc((24px - 100vw) / 2);
+    top: 190px;
+    min-height: 110px;
+    max-height: calc(100dvh - 372px);
+    padding: 16px;
+  }
+  .chips { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; white-space: nowrap; }
+  .promptbar { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+}
