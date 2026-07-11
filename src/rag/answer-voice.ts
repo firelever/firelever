@@ -7,7 +7,9 @@
 import { client } from "../llm.js";
 import { getEmbedder } from "./embeddings.js";
 import { search } from "./retrieval.js";
-import { listItems } from "../workspace/store.js";
+import { listItems, createItem, updateItem } from "../workspace/store.js";
+import { updateEmail } from "../triage/store.js";
+import { sendReply, replySendingConfigured } from "../triage/send.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -25,6 +27,59 @@ const SPEAK =
   "Write the reply exactly as it should be spoken aloud: expand abbreviations (write Street not St., " +
   "Avenue not Ave., Apartment not Apt.), read email addresses as 'name at domain dot com', and avoid " +
   "symbols entirely: say 'at' not @, 'and' not &, 'percent' not %, and 'dollars' for $ amounts.";
+
+// ---- action protocol ----
+// The voice model can DO a small set of things, not just talk. It tags exactly
+// one action at the START of its reply; the server executes it BEFORE the
+// confirmation is spoken (never claim first, act first), and the model is
+// forbidden from claiming actions it didn't tag.
+type Action =
+  | { type: "send_reply"; email_id: number; body?: string }
+  | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
+  | { type: "complete_task"; id: number };
+
+const ACTIONS =
+  " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
+  '<<action:{"type":"send_reply","email_id":ID}>> sends that email\'s drafted reply (add "body":"..." only when the user asked to change what it says). ' +
+  '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
+  '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
+  "The system executes the tag before your words are spoken, so phrase the confirmation as already done. " +
+  "NEVER say you sent, added, completed, or scheduled anything without its action tag. For anything outside these actions, say you can't do that yet.";
+
+// Returns a spoken failure sentence, or null when the action succeeded.
+async function executeAction(tenantId: string, a: Action): Promise<string | null> {
+  try {
+    if (a.type === "send_reply") {
+      const row = db
+        .prepare(
+          `SELECT id, from_addr, subject, draft_reply, message_id, sent_at FROM inbound_emails
+           WHERE id = ? AND tenant_id = ?`
+        )
+        .get(a.email_id, tenantId) as
+        | { id: number; from_addr: string; subject: string; draft_reply: string | null; message_id: string | null; sent_at: string | null }
+        | undefined;
+      if (!row) return "I couldn't find that email, so nothing was sent.";
+      if (row.sent_at) return "That reply already went out earlier, so I didn't send it again.";
+      const body = (a.body ?? row.draft_reply ?? "").trim();
+      if (!body) return "There's no drafted reply on that email, so nothing was sent.";
+      if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
+      await sendReply({ from_addr: row.from_addr, subject: row.subject, draft_reply: body, message_id: row.message_id });
+      updateEmail(row.id, { status: "approved", sent_at: new Date().toISOString(), draft_reply: body });
+      return null;
+    }
+    if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
+      if (!a.title?.trim()) return "I didn't catch what to add, so nothing was saved.";
+      createItem(tenantId, a.type.slice(4), a.title.trim(), a.body?.trim() || undefined, a.at?.trim() || undefined);
+      return null;
+    }
+    if (a.type === "complete_task") {
+      return updateItem(tenantId, a.id, { done: 1 }) ? null : "I couldn't find that task, so nothing was checked off.";
+    }
+    return "I don't know how to do that yet, so nothing happened.";
+  } catch (e) {
+    return "That didn't go through: " + (e instanceof Error ? e.message : "unknown error") + ". Nothing was changed.";
+  }
+}
 
 // Instant intent routing over the whole conversation, no model call. A turn
 // with no strong signal of its own ("yes, go by sender") sticks with the most
@@ -99,7 +154,7 @@ export async function streamVoiceReply(
       listItems(tenantId, kind)
         .map(
           (i) =>
-            `- ${i.title}${i.at ? ` (at ${i.at})` : ""}${i.body ? ` — ${i.body.slice(0, 120)}` : ""}${
+            `- [id ${i.id}] ${i.title}${i.at ? ` (at ${i.at})` : ""}${i.body ? ` — ${i.body.slice(0, 120)}` : ""}${
               kind === "task" ? (i.done ? " [done]" : " [open]") : ""
             }`
         )
@@ -112,7 +167,8 @@ export async function streamVoiceReply(
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
       "and offer to add an item. " +
-      SPEAK;
+      SPEAK +
+      ACTIONS;
     userContent =
       `${convoBlock}Today's date: ${today}\n\nEvents:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
@@ -179,7 +235,8 @@ export async function streamVoiceReply(
       "marked SENT with a date; a verdict of approved does not mean it was sent, so never claim or imply an " +
       "unsent reply went out. If asked about an email whose body isn't included, say you can pull it up if " +
       "they name the sender. " +
-      SPEAK;
+      SPEAK +
+      ACTIONS;
     userContent = rows.length
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
@@ -210,9 +267,64 @@ export async function streamVoiceReply(
     system,
     messages: [{ role: "user", content: userContent }],
   });
+
+  // Action-aware streaming: when the reply opens with an action tag, hold the
+  // stream, execute the action FIRST, then let the confirmation speak. On
+  // failure, speak the failure instead of the model's premature confirmation.
+  const HEAD = "<<action:";
+  let mode: "detect" | "collect" | "pass" = intent === "inbox" || intent === "workspace" ? "detect" : "pass";
+  let buf = "";
   for await (const ev of stream) {
-    if (ev.type === "content_block_delta" && ev.delta.type === "text_delta") {
-      await onDelta(ev.delta.text);
+    if (ev.type !== "content_block_delta" || ev.delta.type !== "text_delta") continue;
+    const t = ev.delta.text;
+    if (mode === "pass") {
+      await onDelta(t);
+      continue;
+    }
+    buf += t;
+    if (mode === "detect") {
+      if (buf.length < HEAD.length) {
+        if (HEAD.startsWith(buf)) continue; // still could be a tag
+        mode = "pass";
+        await onDelta(buf);
+        buf = "";
+        continue;
+      }
+      if (buf.startsWith(HEAD)) mode = "collect";
+      else {
+        mode = "pass";
+        await onDelta(buf);
+        buf = "";
+        continue;
+      }
+    }
+    if (mode === "collect") {
+      const end = buf.indexOf(">>");
+      if (end < 0) {
+        if (buf.length > 1500) {
+          // runaway tag; bail out and just speak it
+          mode = "pass";
+          await onDelta(buf);
+          buf = "";
+        }
+        continue;
+      }
+      const raw = buf.slice(HEAD.length, end);
+      const rest = buf.slice(end + 2).replace(/^\s+/, "");
+      buf = "";
+      mode = "pass";
+      let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
+      try {
+        failure = await executeAction(tenantId, JSON.parse(raw) as Action);
+      } catch {
+        /* failure message stands */
+      }
+      if (failure) {
+        await onDelta(failure);
+        return; // suppress the model's now-false confirmation
+      }
+      if (rest) await onDelta(rest);
     }
   }
+  if (buf && mode !== "pass") await onDelta(buf); // stream ended mid-detect
 }

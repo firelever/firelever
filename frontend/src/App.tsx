@@ -83,10 +83,19 @@ export function App() {
           lastRoleRef.current = r;
           // The SDK can report a message twice; skip an immediate duplicate.
           setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
+          // Surface the window matching what's being discussed.
+          const w = windowFor(t);
+          if (w) promote(w);
           if (r === "user") setLastQuestion(t);
-          // Only surface a real answer (an agent reply to a question) in the card,
-          // not the opening greeting or a reconnect greeting.
-          else if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
+          else {
+            // Only surface a real answer (an agent reply to a question) in the
+            // card, not the opening greeting or a reconnect greeting.
+            if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
+            // Levi may have executed an action (sent a reply, added a task) —
+            // refresh the windows so they show the new state.
+            loadTriage();
+            loadWorkspace();
+          }
         },
         onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
       });
@@ -153,6 +162,18 @@ export function App() {
 
   const promote = (id: string) => setOrder((o) => [id, ...o.filter((x) => x !== id)]);
 
+  // Contextual window surfacing: bring forward the window that matches what
+  // the conversation is about right now (same domains the voice brain routes).
+  const windowFor = (text: string): string | null => {
+    const s = text.toLowerCase();
+    if (/\b(inbox|e-?mails?|reply|replies|senders?|unread|mailbox|newsletters?|spam|messages?|inquir(y|ies))\b/.test(s)) return "inbox";
+    if (/\b(schedules?|calendars?|appointments?|meetings?|events?)\b/.test(s)) return "schedule";
+    if (/\b(tasks?|to-?dos?|reminders?|check(ed)? (that |it |this )?off)\b/.test(s)) return "tasks";
+    if (/\bnotes?\b/.test(s)) return "notes";
+    if (/\b(documents?|contracts?|clauses?|agreements?|sellers?|buyers?|closing|deposit|price|propert(y|ies)|warranty)\b/.test(s)) return "answer";
+    return null;
+  };
+
   async function submitAsk(q: string) {
     if (!q.trim() || busy) return;
     setInput("");
@@ -160,7 +181,7 @@ export function App() {
     setMode("thinking");
     setMessages((m) => [...m, { role: "user", text: q }]);
     setLastQuestion(q);
-    promote("answer");
+    promote(windowFor(q) ?? "answer");
     try {
       const r = await api.ask(q, speakReplies && voiceReady);
       setLiveAnswer(r);
