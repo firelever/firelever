@@ -18,6 +18,7 @@ import { SUPPORTED } from "../rag/extract.js";
 import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
+import { sendReply, replySendingConfigured } from "../triage/send.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
@@ -206,11 +207,32 @@ app.post("/api/triage/:id/verdict", async (c) => {
     return c.json({ error: "verdict must be approved | rejected | ignored" }, 400);
   }
   const row = db
-    .prepare(`SELECT id FROM inbound_emails WHERE id = ? AND tenant_id = ? AND status = 'drafted'`)
-    .get(id, tenant.id);
+    .prepare(
+      `SELECT id, from_addr, subject, draft_reply, message_id FROM inbound_emails
+       WHERE id = ? AND tenant_id = ? AND status = 'drafted'`
+    )
+    .get(id, tenant.id) as
+    | { id: number; from_addr: string; subject: string; draft_reply: string | null; message_id: string | null }
+    | undefined;
   if (!row) return c.json({ error: "not found" }, 404);
+
+  // Approve = actually send the reply (the click is the human guardrail).
+  // The status only flips to approved after the send succeeds.
+  let sent = false;
+  if (verdict === "approved" && row.draft_reply) {
+    if (!replySendingConfigured()) {
+      return c.json({ error: "sending not configured (GMAIL_USER / GMAIL_APP_PASSWORD)" }, 503);
+    }
+    try {
+      await sendReply({ ...row, draft_reply: row.draft_reply });
+      sent = true;
+    } catch (e) {
+      console.error("[verdict] send failed:", e instanceof Error ? e.message : e);
+      return c.json({ error: "sending the reply failed; verdict not recorded" }, 502);
+    }
+  }
   updateEmail(id, { status: verdict });
-  return c.json({ ok: true, status: verdict });
+  return c.json({ ok: true, status: verdict, sent });
 });
 
 // ---------- inbox cleanup (archive-only, propose then apply) ----------

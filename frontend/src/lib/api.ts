@@ -34,7 +34,7 @@ export const api = {
   triage: () =>
     req<{ queue: { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }[] }>("/triage"),
   verdict: (id: number, verdict: "approved" | "rejected" | "ignored") =>
-    req<{ ok: boolean }>(`/triage/${id}/verdict`, { method: "POST", body: JSON.stringify({ verdict }) }),
+    req<{ ok: boolean; status: string; sent?: boolean }>(`/triage/${id}/verdict`, { method: "POST", body: JSON.stringify({ verdict }) }),
   workspace: (kind: "task" | "event" | "note") => req<{ items: WsItem[] }>(`/workspace/${kind}`),
   addItem: (kind: "task" | "event" | "note", title: string, body?: string, at?: string) =>
     req<WsItem>(`/workspace/${kind}`, { method: "POST", body: JSON.stringify({ title, body, at }) }),

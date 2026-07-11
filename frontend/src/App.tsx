@@ -182,7 +182,13 @@ export function App() {
   }
 
   async function verdict(id: number, v: "approved" | "rejected" | "ignored") {
-    await api.verdict(id, v).catch(() => {});
+    const item = queue.find((q) => q.id === id);
+    try {
+      const r = await api.verdict(id, v);
+      if (r.sent) setMessages((m) => [...m, { role: "bot", text: `Reply sent to ${item?.from ?? "the sender"}.` }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "bot", text: "Couldn't send the reply: " + (e instanceof Error ? e.message : e) }]);
+    }
     loadTriage();
   }
 
