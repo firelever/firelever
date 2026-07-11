@@ -189,12 +189,13 @@ export async function streamVoiceReply(
     const tasks = fmt("task");
     const notes = fmt("note");
     const today = new Date().toISOString().slice(0, 10);
-    // Surface the specific workspace window under discussion.
-    const wsText = (question + " " + history.slice(-2).map((h) => h.text).join(" ")).toLowerCase();
-    publishUiContext(
-      tenantId,
-      /\b(tasks?|to-?dos?|check(ed)? off|reminders?)\b/.test(wsText) ? "tasks" : /\bnotes?\b/.test(wsText) ? "notes" : "schedule"
-    );
+    // Surface the specific workspace window under discussion. Only the user's
+    // own words pick the window — assistant prose ("worth a note...") must not.
+    const wsText = question.toLowerCase();
+    const lastUserText = [...history].reverse().find((h) => h.role === "user")?.text.toLowerCase() ?? "";
+    const pick = (s: string) =>
+      /\b(tasks?|to-?dos?|check(ed)? off|reminders?)\b/.test(s) ? "tasks" : /\bnotes?\b/.test(s) ? "notes" : /\b(schedules?|calendars?|appointments?|meetings?|events?)\b/.test(s) ? "schedule" : null;
+    publishUiContext(tenantId, pick(wsText) ?? pick(lastUserText) ?? "schedule");
     system =
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +

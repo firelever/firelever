@@ -85,9 +85,9 @@ export function App() {
           lastRoleRef.current = r;
           // The SDK can report a message twice; skip an immediate duplicate.
           setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
-          // Surface the window matching what's being discussed.
-          const w = windowFor(t);
-          if (w) promote(w);
+          // Window surfacing is driven by the server's ui-context (the brain's
+          // actual intent), never by keyword-scanning transcript prose — Levi
+          // saying "worth a note" must not yank the Notes window forward.
           if (r === "user") setLastQuestion(t);
           else {
             // Only surface a real answer (an agent reply to a question) in the
