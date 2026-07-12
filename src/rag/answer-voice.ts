@@ -92,9 +92,13 @@ const CTX =
   " SCREEN CONTEXT: A window on screen follows this conversation, and YOU control what it shows. If the data you " +
   "were given is the WRONG DOMAIN for the user's request (they asked about email but you got document sources, " +
   'asked about documents but got the inbox, and so on), output ONLY <<ctx:{"reroute":"inbox"}>> (or "docs" or ' +
-  '"workspace") and nothing else — the system redoes the turn with the right data. Whenever your answer discusses ' +
-  'one specific email from the list, you MUST start your reply with <<ctx:{"email_id":ID}>> so the screen shows ' +
-  "THAT email — every time, follow-ups included; the screen may otherwise be showing a stale email from earlier.";
+  '"workspace") and nothing else — the system redoes the turn with the right data. If the user is asking about ' +
+  "their documents but the provided sources do not contain the answer, do NOT give up: output ONLY " +
+  '<<ctx:{"search":"a better search query naming the document and the thing sought"}>> and nothing else — the ' +
+  "system searches again and redoes the turn (one retry; if the retried sources still lack it, say so plainly). " +
+  'Whenever your answer discusses one specific email from the list, you MUST start your reply with ' +
+  '<<ctx:{"email_id":ID}>> so the screen shows THAT email — every time, follow-ups included; the screen may ' +
+  "otherwise be showing a stale email from earlier.";
 
 // Email bodies get shown in the UI and read aloud; angle-bracketed and long
 // tracking URLs (newsletter plumbing) are pure noise in both registers.
@@ -332,6 +336,11 @@ const GENERIC = new Set([
   "gmail", "yahoo", "outlook", "hotmail", "icloud", "google", "noreply", "no-reply", "notifications",
   "info", "hello", "support", "team", "mail", "admin", "update", "updates", "account", "workspace",
   "uploads", "docs", "images", "week", "this", "your", "with", "from", "about",
+  // 3-letter tokens are allowed (entity names like "Ute" matter), so common
+  // short English words must be screened out explicitly.
+  "the", "and", "for", "you", "are", "can", "not", "but", "was", "has", "had", "did", "get", "got",
+  "her", "him", "his", "she", "own", "our", "out", "who", "how", "why", "its", "yes", "let", "all",
+  "any", "new", "now", "one", "two", "say", "see", "too", "use", "way", "off", "per", "via",
 ]);
 interface Lexicon { inbox: Set<string>; docs: Set<string>; ws: Set<string> }
 const lexCache = new Map<string, { at: number; lex: Lexicon }>();
@@ -340,7 +349,7 @@ function tokens(s: string): string[] {
   return s
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 4 && !GENERIC.has(w));
+    .filter((w) => w.length >= 3 && !GENERIC.has(w)); // 3-char minimum: "Ute" is an entity
 }
 
 function lexiconFor(tenantId: string): Lexicon {
@@ -384,10 +393,15 @@ function invalidateLexicon(tenantId: string): void {
 function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): Intent {
   const raw = question.toLowerCase().trim();
   const s = maskNegations(raw);
+  // Chat is ONLY for greetings, thanks, and questions about Levi himself.
+  // An informational question must never land here (the chat branch has no
+  // data and can only recite a capability menu). Greetings must be the whole
+  // utterance: "hey, what's the price?" is a question, not a greeting.
+  const looksLikeQuestion = /\b(who|what|when|where|which|why|how|show|read|tell|find|list|give)\b/.test(raw) || raw.includes("?");
   if (
-    (raw.split(/\s+/).length <= 2 && !strongSignal(s)) ||
-    /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))\b/.test(raw) ||
-    /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(raw)
+    /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))[\s!,.…a-z]{0,8}$/.test(raw) ||
+    /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(raw) ||
+    (raw.split(/\s+/).length <= 2 && !strongSignal(s) && !looksLikeQuestion)
   )
     return "chat";
   // Layer 1: explicit domain vocabulary (negations masked).
@@ -434,7 +448,8 @@ export async function streamVoiceReply(
   question: string,
   onDelta: (t: string) => void | Promise<void>,
   history: VoiceTurn[] = [],
-  forced?: Intent // set on a model-requested reroute; never recurses twice
+  forced?: Intent, // set on a model-requested reroute; never recurses twice
+  searchOverride?: string // set on a model-requested re-search; never recurses twice
 ): Promise<void> {
   const intent = forced ?? routeIntent(tenantId, question, history);
   if (intent !== "chat") setLastIntent(tenantId, intent);
@@ -608,10 +623,22 @@ export async function streamVoiceReply(
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
     publishUiContext(tenantId, "answer", null); // docs turn: no email belongs on screen
-    // For terse follow-ups, enrich the retrieval query with the previous user
-    // turn so hybrid search has something to bite on.
-    const prevUser = [...history].reverse().find((h) => h.role === "user")?.text ?? "";
-    const query = question.split(/\s+/).length < 5 && prevUser ? `${prevUser} ${question}` : question;
+    // Conversation-anchored retrieval, ALWAYS on: a follow-up like "who are
+    // the listing agents?" carries no entity of its own, so the search query
+    // is anchored with entity words from the recent conversation that exist
+    // in this tenant's document lexicon ("ute", "contract", ...). Terse
+    // follow-ups additionally inherit the previous user turn verbatim.
+    let query: string;
+    if (searchOverride) {
+      query = searchOverride; // the model asked to search again with a better query
+    } else {
+      const lex = lexiconFor(tenantId);
+      const recent = [...history.slice(-4).map((h) => h.text), question].join(" ");
+      const anchors = [...new Set(tokens(recent).filter((t) => lex.docs.has(t)))].slice(0, 8);
+      const prevUser = [...history].reverse().find((h) => h.role === "user")?.text ?? "";
+      const base = question.split(/\s+/).length < 5 && prevUser ? `${prevUser} ${question}` : question;
+      query = anchors.length ? `${base}\n${anchors.join(" ")}` : base;
+    }
     const hits = await search(tenantId, query, 40, getEmbedder(), "hybrid").catch(() => []);
     const block = hits
       .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 800)}`)
@@ -648,6 +675,7 @@ export async function streamVoiceReply(
   // out and executed BEFORE any speech is released; a ctx reroute aborts the
   // turn so it can re-run against the right data.
   let reroute: Intent | null = null;
+  let research: string | null = null; // model-requested retry with a better search query
   let acted = false; // an action executed — this turn must never be regenerated
 
   const runOnce = async (): Promise<void> => {
@@ -682,12 +710,18 @@ export async function streamVoiceReply(
       }
       // ctx: routing correction / entity focus. Malformed ctx is ignored.
       try {
-        const c = JSON.parse(raw) as { reroute?: string; email_id?: number; window?: string };
+        const c = JSON.parse(raw) as { reroute?: string; email_id?: number; window?: string; search?: string };
         // Rerouting to the domain we're already in is meaningless — ignore it
         // (a stop here produced silent turns: reroute → re-run → ignored tag →
         // empty reply → "Brain returned no response").
         if (c.reroute && c.reroute !== intent && !forced && !emitted && ["inbox", "docs", "workspace"].includes(c.reroute)) {
           reroute = c.reroute as Intent;
+          return "stop";
+        }
+        // Model-requested re-search: the sources were the right domain but
+        // missed the answer; retry retrieval once with the model's query.
+        if (c.search?.trim() && intent === "docs" && !searchOverride && !emitted) {
+          research = c.search.trim();
           return "stop";
         }
         if (typeof c.email_id === "number") {
@@ -792,5 +826,11 @@ export async function streamVoiceReply(
   // and the model could tell from the data. Re-run once with the right one.
   if (reroute && !emitted) {
     await streamVoiceReply(tenantId, question, onDelta, history, reroute);
+    return;
+  }
+  // Model-requested re-search: right domain, wrong retrieval. Retry once with
+  // the model's own query — it knows the conversation and what it needs.
+  if (research && !emitted) {
+    await streamVoiceReply(tenantId, question, onDelta, history, intent, research);
   }
 }
