@@ -54,6 +54,13 @@ FireLever · firelever.com
 If you'd rather not hear from me, reply "no thanks" and I won't email again.
 `.trim();
 
+// Google Calendar (ADR-016): OAuth2 with a long-lived refresh token, minted
+// once via `npm run gcal-auth`. All three must be set or the calendar
+// integration reports itself unconfigured and Levi says so plainly.
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
+export const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN ?? "";
+
 // Gmail sending/reply-check credentials (free tier: plain Gmail + app password).
 // Set in .env: GMAIL_USER=you@gmail.com  GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 export const GMAIL_USER = process.env.GMAIL_USER ?? "";

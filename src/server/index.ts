@@ -21,6 +21,7 @@ import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
 import { getUiContext, resetUiContext } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
+import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
@@ -251,10 +252,34 @@ app.post("/api/inbox/cleanup/apply", limited("upload"), async (c) => {
 });
 
 // ---------- workspace: tasks / schedule / notes ----------
-app.get("/api/workspace/:kind", (c) => {
+app.get("/api/workspace/:kind", async (c) => {
   const kind = c.req.param("kind");
   if (!["task", "event", "note"].includes(kind)) return c.json({ error: "bad kind" }, 400);
-  return c.json({ items: listItems(c.get("tenant").id, kind) });
+  const items = listItems(c.get("tenant").id, kind);
+  // The schedule window shows the REAL calendar too (ADR-016). Google events
+  // get synthetic ids far above the local range and are display-only here —
+  // changing them goes through Levi's update_event/cancel_event actions.
+  if (kind === "event" && calendarConfigured()) {
+    try {
+      const evs = await listEvents(14);
+      const gitems = evs.map((e, i) => {
+        const m = e.start.match(/T(\d{2}:\d{2})/);
+        const d = new Date(e.start);
+        return {
+          id: 1_000_000 + i,
+          kind: "event",
+          title: `${isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" }) + " · "}${e.title}${e.meet_link ? " · Meet" : ""}`,
+          body: e.meet_link,
+          done: 0,
+          at: m ? m[1] : "all day",
+        };
+      });
+      return c.json({ items: [...gitems, ...items] });
+    } catch {
+      /* calendar unreachable — local items still render */
+    }
+  }
+  return c.json({ items });
 });
 app.post("/api/workspace/:kind", async (c) => {
   const kind = c.req.param("kind");

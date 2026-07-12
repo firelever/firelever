@@ -7,7 +7,16 @@
 import { client } from "../llm.js";
 import { getEmbedder } from "./embeddings.js";
 import { search } from "./retrieval.js";
-import { listItems, createItem, updateItem } from "../workspace/store.js";
+import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
+import {
+  calendarConfigured,
+  listEvents,
+  createEvent,
+  updateEvent,
+  cancelEvent,
+  rememberGids,
+  resolveGid,
+} from "../calendar/google.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
 import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js";
@@ -46,7 +55,9 @@ type Action =
   | { type: "archive_email"; email_id: number }
   | { type: "archive_newsletters" }
   | { type: "categorize_email"; email_id: number; category: string }
-  | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
+  | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[] }
+  | { type: "update_event"; id: string | number; title?: string; at?: string; duration_minutes?: number; meet?: boolean }
+  | { type: "cancel_event"; id: string | number }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
   | { type: "show_window"; window: string }
@@ -70,6 +81,11 @@ const ACTIONS =
   "Deleting email is deliberately not supported, archiving is the safe reversible equivalent, offer it instead. " +
   '<<action:{"type":"categorize_email","email_id":ID,"category":"new_business|support|vendor_partner|recruiting|newsletter_spam|other"}>> re-files an email under a different category. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
+  'CALENDAR: when Google Calendar is connected, add_event books a REAL calendar event — include "at" with an explicit date AND time (ask if you only have one of them), optional "duration_minutes" (default 30), ' +
+  '"meet":true to attach a Google Meet video link, and "invite":["addr@domain.com"] ONLY when the address is explicit in the conversation; never guess an invitee\'s email, ask for it. ' +
+  '<<action:{"type":"update_event","id":"g2","at":"YYYY-MM-DD HH:MM","duration_minutes":45,"title":"...","meet":true}>> reschedules, moves, renames, extends, or adds a Meet link to an existing event — include only the fields being changed. ' +
+  'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones. ' +
+  '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
   '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Replies window, notes is Prep). ' +
   '<<action:{"type":"set_theme","theme":"ember|graphite|nebula|signal|ivory"}>> switches the color theme when asked. ' +
@@ -124,6 +140,21 @@ function duplicateSend(key: string, ttlMs = 120_000): boolean {
   return false;
 }
 
+// Server-truth confirmations are spoken by TTS, so dates must be said the way
+// a person says them: "Tuesday July 14 at 1 PM", never "2026-07-14 13:00".
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function spokenWhen(at: string): string {
+  const m = at.trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/);
+  if (!m) return at;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  let h = +m[4];
+  const min = +m[5];
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${DAYS[d.getUTCDay()]} ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} at ${h}${min ? ":" + String(min).padStart(2, "0") : ""} ${ap}`;
+}
+
 // Short present-tense label for the activity feed while an action executes.
 function actionLabel(a: Action): string {
   switch (a.type) {
@@ -136,8 +167,10 @@ function actionLabel(a: Action): string {
     case "archive_newsletters": return `Sweeping newsletters to archive`;
     case "categorize_email": return `Filing as ${a.category?.replace(/_/g, " ")}`;
     case "add_task": return `Adding task`;
-    case "add_event": return `Adding event`;
+    case "add_event": return calendarConfigured() ? `Booking on Google Calendar` : `Adding event`;
     case "add_note": return `Adding note`;
+    case "update_event": return `Updating calendar event`;
+    case "cancel_event": return `Cancelling event`;
     case "complete_task": return `Checking off task`;
     case "remember": return `Saving to memory`;
     case "show_window": return `Opening ${a.window} window`;
@@ -312,11 +345,78 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
       if (!a.title?.trim()) return "I didn't catch what to add, so nothing was saved.";
+      // Events go on the REAL calendar when it's connected (ADR-016). The
+      // spoken confirmation is server truth built from what Google returned.
+      if (a.type === "add_event" && calendarConfigured()) {
+        if (!a.at?.trim() || !/\d{1,2}:\d{2}/.test(a.at))
+          return "I need a date and a time to put that on your Google Calendar. When should it be?";
+        const invite = (a.invite ?? []).map((s) => s.trim()).filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+        if ((a.invite?.length ?? 0) > invite.length)
+          return "One of those invite addresses doesn't look right, so I haven't booked it yet. What's the exact email?";
+        const ev = await createEvent({
+          title: a.title.trim(),
+          at: a.at.trim(),
+          durationMin: a.duration_minutes,
+          meet: a.meet,
+          attendees: invite,
+        });
+        invalidateLexicon(tenantId);
+        publishUiContext(tenantId, "schedule", null);
+        const who = invite.length === 1 ? ` invite sent to ${invite[0].replace("@", " at ")},` : invite.length > 1 ? ` invites sent to ${invite.length} people,` : "";
+        return `Booked. ${a.title.trim()}, ${spokenWhen(a.at)},${ev.meet_link ? " with a Google Meet link," : ""}${who} on your Google Calendar.`;
+      }
       const kind = a.type.slice(4);
       createItem(tenantId, kind, a.title.trim(), a.body?.trim() || undefined, a.at?.trim() || undefined);
       invalidateLexicon(tenantId); // new entity words exist now
       publishUiContext(tenantId, kind === "task" ? "tasks" : kind === "event" ? "schedule" : "notes");
+      // Asked for calendar features without a connected calendar: be honest
+      // about where the event actually lives instead of implying it's booked.
+      if (a.type === "add_event" && (a.meet || a.invite?.length))
+        return "I put it on my local schedule, but your Google Calendar isn't connected yet, so there's no Meet link or invites. Once the calendar setup is run, I can book real meetings.";
       return null;
+    }
+    if (a.type === "update_event") {
+      const ref = String(a.id ?? "").trim().toLowerCase();
+      const fields = {
+        title: a.title?.trim() || undefined,
+        at: a.at?.trim() || undefined,
+        durationMin: a.duration_minutes,
+        meet: a.meet || undefined,
+      };
+      if (!fields.title && !fields.at && !fields.durationMin && !fields.meet)
+        return "Tell me what to change about that event: the time, the title, the length, or adding a Meet link.";
+      if (/^g\d+$/.test(ref)) {
+        if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't change that event.";
+        const gid = resolveGid(tenantId, ref);
+        if (!gid) return "I've lost track of which event that was. Ask me about your schedule, then tell me which one to change.";
+        const ev = await updateEvent(gid, fields);
+        publishUiContext(tenantId, "schedule", null);
+        return `Done. ${ev.title} is ${fields.at ? `now ${spokenWhen(fields.at)}` : "updated"}${fields.meet && ev.meet_link ? ", with a Google Meet link attached" : ""}, on your Google Calendar. Anyone invited gets the update.`;
+      }
+      const local: { title?: string; at?: string } = {};
+      if (fields.title) local.title = fields.title;
+      if (fields.at) local.at = fields.at;
+      if (Object.keys(local).length && updateItem(tenantId, Number(ref), local)) {
+        publishUiContext(tenantId, "schedule");
+        return null;
+      }
+      return "I couldn't find that event, so nothing was changed.";
+    }
+    if (a.type === "cancel_event") {
+      const ref = String(a.id ?? "").trim().toLowerCase();
+      if (/^g\d+$/.test(ref)) {
+        if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't cancel that event.";
+        const gid = resolveGid(tenantId, ref);
+        if (!gid) return "I've lost track of which event that was. Ask me about your schedule, then tell me which one to cancel.";
+        await cancelEvent(gid);
+        publishUiContext(tenantId, "schedule", null);
+        return "Cancelled. Anyone invited gets notified, and it stays in your calendar trash for a month if you change your mind.";
+      }
+      if (deleteItem(tenantId, Number(ref))) {
+        publishUiContext(tenantId, "schedule", null);
+        return "Removed it from your schedule.";
+      }
+      return "I couldn't find that event, so nothing was cancelled.";
     }
     if (a.type === "complete_task") {
       const ok = updateItem(tenantId, a.id, { done: 1 });
@@ -538,6 +638,26 @@ export async function streamVoiceReply(
     const events = fmt("event");
     const tasks = fmt("task");
     const notes = fmt("note");
+    // The real calendar, when connected: listed with [gN] ids the model can
+    // reschedule/cancel against. Failures surface as data, not silence.
+    let gcalBlock = "";
+    if (calendarConfigured()) {
+      try {
+        const evs = await listEvents(14);
+        rememberGids(tenantId, evs);
+        gcalBlock = evs
+          .map(
+            (e, i) =>
+              `- [g${i + 1}] ${e.title} — ${e.start.replace("T", " ").slice(0, 16)} to ${e.end.replace("T", " ").slice(0, 16)}` +
+              `${e.meet_link ? " (has Google Meet)" : ""}${e.attendees.length ? ` with ${e.attendees.join(", ")}` : ""}`
+          )
+          .join("\n");
+        publishUiEvent(tenantId, { kind: "sources", state: "ok", n: evs.length, label: "Google Calendar, next 14 days" });
+      } catch (e) {
+        gcalBlock = `(Google Calendar couldn't be loaded: ${e instanceof Error ? e.message.slice(0, 100) : "error"})`;
+        publishUiEvent(tenantId, { kind: "sources", state: "fail", label: "Google Calendar unreachable" });
+      }
+    }
     const today = new Date().toISOString().slice(0, 10);
     // Surface the specific workspace window under discussion. Only the user's
     // own words pick the window — assistant prose ("worth a note...") must not.
@@ -550,13 +670,16 @@ export async function streamVoiceReply(
     system =
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
-      "and offer to add an item. " +
+      "and offer to add an item. Items marked [gN] are REAL Google Calendar events: reference them by that id in " +
+      "update_event and cancel_event actions. Local [id N] events are only on this dashboard, not the real calendar. " +
       SPEAK +
       ACTIONS +
       CTX +
       MEM;
     userContent =
-      `${convoBlock}Today's date: ${today}\n\nEvents:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
+      `${convoBlock}Today's date: ${today}\n\n` +
+      (calendarConfigured() ? `Google Calendar (next 14 days):\n${gcalBlock || "(no upcoming events)"}\n\n` : "") +
+      `Local events:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
     const rows = db
       .prepare(
@@ -790,7 +913,7 @@ export async function streamVoiceReply(
         // A returned sentence is the server's truth (a failure, or the real
         // counts for a bulk action); it replaces whatever the model was about
         // to claim. Whether it reads as success decides the feed color.
-        const failed = replace !== null && !/^(Done|Filed)/.test(replace);
+        const failed = replace !== null && !/^(Done|Filed|Booked|Cancelled|Removed)/.test(replace);
         publishUiEvent(tenantId, {
           kind: "result",
           state: failed ? "fail" : "ok",

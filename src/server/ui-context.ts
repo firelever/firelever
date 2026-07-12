@@ -67,9 +67,15 @@ export function publishUiContext(
 
 // Append an activity event and bump seq so pollers pick it up on the next
 // tick. Window, email, and theme are untouched — events are a parallel stream.
+// The voice pipeline delivers turns at-least-once (duplicates ~1s apart), so
+// an identical event arriving within a short window is the same step replayed,
+// not a new one — drop it or the reasoning rail shows everything twice.
 export function publishUiEvent(tenantId: string, ev: Omit<UiEvent, "id" | "at">): void {
   const prev = contexts.get(tenantId);
-  const events = [...(prev?.events ?? []), { ...ev, id: evId++, at: Date.now() }].slice(-EVENTS_KEPT);
+  const now = Date.now();
+  const dup = (prev?.events ?? []).some((e) => e.kind === ev.kind && e.label === ev.label && now - e.at < 5000);
+  if (dup) return;
+  const events = [...(prev?.events ?? []), { ...ev, id: evId++, at: now }].slice(-EVENTS_KEPT);
   contexts.set(tenantId, {
     seq: seq++,
     window: prev?.window ?? "answer",

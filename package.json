@@ -28,7 +28,8 @@
     "typecheck": "tsc --noEmit",
     "requeue": "tsx src/triage/requeue-cli.ts",
     "memory": "tsx src/rag/memory-cli.ts",
-    "repair": "tsx src/rag/repair-cli.ts"
+    "repair": "tsx src/rag/repair-cli.ts",
+    "gcal-auth": "tsx src/calendar/auth-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
