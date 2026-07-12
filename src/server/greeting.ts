@@ -3,9 +3,8 @@
 // in the calendar's timezone, and one true hook (staged replies, mail waiting,
 // the next meeting). No LLM call: the greeting must be ready the instant the
 // session opens, and it must never claim anything the data doesn't show.
-import db from "../rag/store.js";
 import { listMemories } from "../rag/memory.js";
-import { calendarConfigured, calendarTimeZone, listEvents } from "../calendar/google.js";
+import { calendarConfigured, calendarTimeZone } from "../calendar/google.js";
 
 const pick = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
@@ -18,67 +17,37 @@ function nameFor(tenantId: string): string | null {
   return null;
 }
 
-function spokenClock(iso: string, tz: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit", timeZone: tz }).replace(":00", "");
-}
+// The last greeting spoken per tenant, so back-to-back sessions never open
+// with the same line.
+const lastGreeting = new Map<string, string>();
 
+// Simple, warm small talk — no status report, no agenda. Levi doesn't lead
+// with "one email needs a reply" the moment the mic opens (live feedback:
+// it reads as jumping the gun); the user asks when they want the rundown.
 export async function buildGreeting(tenantId: string): Promise<string> {
   let tz = "UTC";
   if (calendarConfigured()) tz = await calendarTimeZone().catch(() => "UTC");
   const hour = Number(new Date().toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: tz }));
   const name = nameFor(tenantId);
   const who = name ? ` ${name}` : "";
+  const daypart = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
 
-  const opener = pick(
-    hour < 12
-      ? [`Morning${who}.`, `Good morning${who}.`, `Hey${who}, morning.`]
-      : hour < 17
-        ? [`Hey${who}.`, `Good afternoon${who}.`, `Afternoon${who}.`]
-        : [`Evening${who}.`, `Hey${who}, good evening.`, `Good evening${who}.`]
-  );
+  const lines = [
+    `Hey${who}, how's it going?`,
+    `Hey${who}, good to hear you.`,
+    `Hi${who}. What's on your mind?`,
+    `Hey${who}, welcome back.`,
+    `Hey${who}. What are we getting into?`,
+    `Hi${who}, how's your day going?`,
+    `Hey${who}. I'm all ears.`,
+    `Hey${who}, what can I do for you?`,
+    `Hi${who}. Ready when you are.`,
+    `Hey${who}, hope the ${daypart}'s treating you well. What's up?`,
+    `Hey${who}, how's the ${daypart} going?`,
+  ];
 
-  // One true hook, in priority order. Every fact here is read, not invented.
-  const hooks: string[] = [];
-  try {
-    const drafted = (
-      db.prepare(`SELECT COUNT(*) c FROM inbound_emails WHERE tenant_id = ? AND status = 'drafted'`).get(tenantId) as { c: number }
-    ).c;
-    if (drafted > 0)
-      hooks.push(
-        drafted === 1 ? "One reply is staged and waiting on your go-ahead." : `${drafted} replies are staged and waiting on your go-ahead.`
-      );
-    const waiting = (
-      db
-        .prepare(
-          `SELECT COUNT(*) c FROM inbound_emails WHERE tenant_id = ? AND needs_reply = 1 AND status NOT IN ('approved','archived','archive_missing')`
-        )
-        .get(tenantId) as { c: number }
-    ).c;
-    if (waiting > 0) hooks.push(waiting === 1 ? "One email still needs a reply." : `${waiting} emails still need replies.`);
-  } catch {
-    /* hooks are optional */
-  }
-  if (calendarConfigured()) {
-    try {
-      const next = (await listEvents(2))[0];
-      if (next) hooks.push(`Next up on your calendar is ${next.title}, ${spokenClock(next.start, tz)}.`);
-    } catch {
-      /* calendar hook is optional */
-    }
-  }
-
-  const invite = pick([
-    "Where do you want to start?",
-    "What should we tackle first?",
-    "What can I pull up?",
-    "Ready when you are.",
-    "What's first?",
-  ]);
-
-  // When there's real news, say it (variety comes from which hook and whether
-  // the invite follows). "All caught up" may ONLY be said when it's true.
-  if (hooks.length) return `${opener} ${pick(hooks)} ${Math.random() < 0.5 ? invite : ""}`.trim();
-  return `${opener} ${pick(["The inbox is quiet.", "All caught up here.", "Everything's tidy on my end."])} ${invite}`.trim();
+  let line = pick(lines);
+  for (let i = 0; i < 3 && line === lastGreeting.get(tenantId); i++) line = pick(lines);
+  lastGreeting.set(tenantId, line);
+  return line;
 }
