@@ -47,8 +47,8 @@ const run = async () => {
       ftsDel.run(c.id, c.text); // FTS delete needs the OLD text (external content)
       upd.run(c.fixed, c.id);
       ftsIns.run(c.id, c.fixed);
-      vecDel.run(c.id);
-      vecIns.run(c.id, tenant, Buffer.from(vectors[i].buffer));
+      vecDel.run(BigInt(c.id)); // vec0 requires integer-typed primary keys
+      vecIns.run(BigInt(c.id), tenant, Buffer.from(vectors[i].buffer));
     });
   });
   tx();
