@@ -138,6 +138,9 @@ in their mail client for the flows Levi owns:
   are never sent in one breath — Levi stages the reply as a visible draft in
   the Replies window, reads back the gist, and sends only on confirmation
   (voice yes or the on-screen Approve). Revisions re-stage.
+- Brand-new emails (compose) follow the same staged-preview flow as replies
+  (amendment 2026-07-12): compose_email only stages the email on screen; a
+  separate confirmed send_email releases it. Nothing outbound skips the preview.
 - Forwarding to an explicit address (ask, never guess), single-email archive
   and bulk newsletter archive (Gmail move, reversible — deletion deliberately
   unsupported per ADR-012), and voice re-categorization across the six triage

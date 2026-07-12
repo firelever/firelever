@@ -10,6 +10,7 @@ import { search } from "./retrieval.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import {
   calendarConfigured,
+  calendarTimeZone,
   listEvents,
   createEvent,
   updateEvent,
@@ -50,14 +51,15 @@ type Action =
   | { type: "send_reply"; email_id: number; body?: string }
   | { type: "stage_reply"; email_id: number; body: string }
   | { type: "compose_email"; to: string; subject: string; body: string }
+  | { type: "send_email" }
   | { type: "draft_reply"; email_id: number; guidance?: string }
   | { type: "forward_email"; email_id: number; to: string; note?: string }
   | { type: "archive_email"; email_id: number }
   | { type: "archive_newsletters" }
   | { type: "categorize_email"; email_id: number; category: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[] }
-  | { type: "update_event"; id: string | number; title?: string; at?: string; duration_minutes?: number; meet?: boolean }
-  | { type: "cancel_event"; id: string | number }
+  | { type: "update_event"; id?: string | number; match?: string; title?: string; at?: string; duration_minutes?: number; meet?: boolean }
+  | { type: "cancel_event"; id?: string | number; match?: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
   | { type: "show_window"; window: string }
@@ -73,8 +75,9 @@ const ACTIONS =
   'When they confirm (or say send the draft), <<action:{"type":"send_reply","email_id":ID}>> sends the staged/unsent draft. Never send dictated content without staging it for review first. ' +
   "You can stage and send on a thread any number of times, including after an earlier reply was sent; if they want changes, stage again with the revised body. " +
   '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> has me write a grounded draft for review instead (use when they want a fuller composed reply). ' +
-  '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"..."}>> sends a brand-new email to any address. ' +
-  "Before compose_email, the recipient address and the message must be explicit in the conversation AND you must have read the gist back and gotten a yes on a previous turn; if the address is missing or you would be guessing it, ask instead of tagging. " +
+  "COMPOSE FLOW — brand-new emails are previewed before they leave, exactly like replies: " +
+  '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"..."}>> STAGES the new email on screen without sending; the recipient address must be explicit in the conversation, ask if it is missing or you would be guessing. ' +
+  'After staging, briefly say what it says and ask if you should send it. When they confirm, <<action:{"type":"send_email"}>> sends the staged email. Nothing ever goes out on compose_email alone. ' +
   '<<action:{"type":"forward_email","email_id":ID,"to":"name@domain.com","note":"optional line to include"}>> forwards that email; the address must be explicit, ask if it is not. ' +
   '<<action:{"type":"archive_email","email_id":ID}>> archives one email (moves it out of the inbox in Gmail; reversible). ' +
   '<<action:{"type":"archive_newsletters"}>> archives all newsletter and promo clutter in one sweep. ' +
@@ -84,7 +87,7 @@ const ACTIONS =
   'CALENDAR: when Google Calendar is connected, add_event books a REAL calendar event — include "at" with an explicit date AND time (ask if you only have one of them), optional "duration_minutes" (default 30), ' +
   '"meet":true to attach a Google Meet video link, and "invite":["addr@domain.com"] ONLY when the address is explicit in the conversation; never guess an invitee\'s email, ask for it. ' +
   '<<action:{"type":"update_event","id":"g2","at":"YYYY-MM-DD HH:MM","duration_minutes":45,"title":"...","meet":true}>> reschedules, moves, renames, extends, or adds a Meet link to an existing event — include only the fields being changed. ' +
-  'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones. ' +
+  'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones; if you have NOT seen a schedule listing this conversation, pass "match":"words from the event title" instead of an id and the system finds it. ' +
   '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
   '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Replies window, notes is Prep). ' +
@@ -140,6 +143,49 @@ function duplicateSend(key: string, ttlMs = 120_000): boolean {
   return false;
 }
 
+// Staged new emails (compose preview parity with replies): compose_email
+// stages here and on screen; only a confirmed send_email actually sends.
+// Sent this way, nothing outbound ever skips the preview.
+const stagedComposes = new Map<string, { to: string; subject: string; body: string; at: number }>();
+const STAGED_TTL_MS = 15 * 60 * 1000;
+
+// Every branch tells the model what day it is — in the calendar's timezone
+// when one is connected. Without this, a turn routed through the inbox branch
+// once booked "tomorrow" as a date from the model's training era (June 2025).
+async function todayLine(): Promise<string> {
+  let tz = "UTC";
+  if (calendarConfigured()) tz = await calendarTimeZone().catch(() => "UTC");
+  const d = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
+  return `Today is ${d}${tz !== "UTC" ? ` (${tz} time)` : ""}.`;
+}
+
+// Resolve which calendar event an action refers to: a [gN] id from a listing,
+// or a "match" phrase scored against upcoming event titles. Returns the gid,
+// or a spoken question when it genuinely can't tell.
+async function findCalendarTarget(
+  tenantId: string,
+  ref: string,
+  match: string | undefined
+): Promise<{ gid: string } | { ask: string }> {
+  if (/^g\d+$/.test(ref)) {
+    const gid = resolveGid(tenantId, ref);
+    if (gid) return { gid };
+  }
+  const evs = await listEvents(60);
+  rememberGids(tenantId, evs);
+  if (evs.length === 0) return { ask: "There's nothing on your Google Calendar in the next two months, so I have no event to change." };
+  if (evs.length === 1) return { gid: evs[0].gid }; // only one event: "that meeting" is unambiguous
+  const words = tokens(match ?? "");
+  if (words.length) {
+    const scored = evs
+      .map((e) => ({ e, score: words.filter((w) => e.title.toLowerCase().includes(w)).length }))
+      .sort((a, b) => b.score - a.score);
+    if (scored[0].score > 0 && scored[0].score > (scored[1]?.score ?? 0)) return { gid: scored[0].e.gid };
+  }
+  const names = evs.slice(0, 3).map((e) => `${e.title} on ${spokenWhen(e.start.replace("T", " "))}`).join("; ");
+  return { ask: `I see a few upcoming: ${names}. Which one do you mean?` };
+}
+
 // Server-truth confirmations are spoken by TTS, so dates must be said the way
 // a person says them: "Tuesday July 14 at 1 PM", never "2026-07-14 13:00".
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -160,7 +206,8 @@ function actionLabel(a: Action): string {
   switch (a.type) {
     case "send_reply": return `Sending reply on email ${a.email_id}`;
     case "stage_reply": return `Staging reply for review`;
-    case "compose_email": return `Sending email to ${a.to}`;
+    case "compose_email": return `Staging new email to ${a.to}`;
+    case "send_email": return `Sending staged email`;
     case "draft_reply": return `Drafting a reply`;
     case "forward_email": return `Forwarding email to ${a.to}`;
     case "archive_email": return `Archiving email in Gmail`;
@@ -213,15 +260,46 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       return null;
     }
     if (a.type === "compose_email") {
+      // Staging only — the send happens in send_email after the user approves
+      // the on-screen preview. Compose once skipped the preview entirely.
       const to = (a.to ?? "").trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid email address for that, so nothing was sent.";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid email address for that, so nothing was staged.";
       const body = (a.body ?? "").trim();
-      if (!body) return "I didn't catch what the email should say, so nothing was sent.";
+      if (!body) return "I didn't catch what the email should say, so nothing was staged.";
+      const subject = (a.subject ?? "").trim() || "(no subject)";
+      stagedComposes.set(tenantId, { to, subject, body, at: Date.now() });
+      publishUiContext(tenantId, "inbox", {
+        id: -1,
+        from_addr: to,
+        subject,
+        received_at: null,
+        body: "",
+        draft_reply: body,
+        status: "compose",
+        sent_at: null,
+      });
+      return `Staged. The new email to ${to.replace("@", " at ")} is on your screen. Want me to send it?`;
+    }
+    if (a.type === "send_email") {
+      const staged = stagedComposes.get(tenantId);
+      if (!staged || Date.now() - staged.at > STAGED_TTL_MS)
+        return "There's no staged email waiting. Tell me who it's for and what it should say, and I'll stage it for review.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
-      if (duplicateSend(`${tenantId}:compose:${to}`))
+      if (duplicateSend(`${tenantId}:compose:${staged.to}`))
         return "I just sent an email to that address moments ago, so I held this one to avoid a duplicate. If you really want another, give it a minute and ask again.";
-      await sendEmail({ to, subject: (a.subject ?? "").trim() || "(no subject)", text: body });
-      return null;
+      await sendEmail({ to: staged.to, subject: staged.subject, text: staged.body });
+      stagedComposes.delete(tenantId);
+      publishUiContext(tenantId, "inbox", {
+        id: -1,
+        from_addr: staged.to,
+        subject: staged.subject,
+        received_at: null,
+        body: "",
+        draft_reply: staged.body,
+        status: "compose",
+        sent_at: new Date().toISOString(),
+      });
+      return `Sent. "${staged.subject}" is on its way to ${staged.to.replace("@", " at ")}.`;
     }
     if (a.type === "draft_reply") {
       const row = db
@@ -385,11 +463,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       };
       if (!fields.title && !fields.at && !fields.durationMin && !fields.meet)
         return "Tell me what to change about that event: the time, the title, the length, or adding a Meet link.";
-      if (/^g\d+$/.test(ref)) {
+      if (/^g\d+$/.test(ref) || a.match?.trim() || !ref) {
         if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't change that event.";
-        const gid = resolveGid(tenantId, ref);
-        if (!gid) return "I've lost track of which event that was. Ask me about your schedule, then tell me which one to change.";
-        const ev = await updateEvent(gid, fields);
+        const target = await findCalendarTarget(tenantId, ref, a.match);
+        if ("ask" in target) return target.ask;
+        const ev = await updateEvent(target.gid, fields);
         publishUiContext(tenantId, "schedule", null);
         return `Done. ${ev.title} is ${fields.at ? `now ${spokenWhen(fields.at)}` : "updated"}${fields.meet && ev.meet_link ? ", with a Google Meet link attached" : ""}, on your Google Calendar. Anyone invited gets the update.`;
       }
@@ -404,11 +482,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "cancel_event") {
       const ref = String(a.id ?? "").trim().toLowerCase();
-      if (/^g\d+$/.test(ref)) {
+      if (/^g\d+$/.test(ref) || a.match?.trim() || !ref) {
         if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't cancel that event.";
-        const gid = resolveGid(tenantId, ref);
-        if (!gid) return "I've lost track of which event that was. Ask me about your schedule, then tell me which one to cancel.";
-        await cancelEvent(gid);
+        const target = await findCalendarTarget(tenantId, ref, a.match);
+        if ("ask" in target) return target.ask;
+        await cancelEvent(target.gid);
         publishUiContext(tenantId, "schedule", null);
         return "Cancelled. Anyone invited gets notified, and it stays in your calendar trash for a month if you change your mind.";
       }
@@ -612,6 +690,9 @@ export async function streamVoiceReply(
     .join("\n");
   const convoBlock = convo ? `Conversation so far:\n${convo}\n\n` : "";
   const MEM = memoryBlock(tenantId);
+  // EVERY branch gets today's date: a turn that can book meetings but doesn't
+  // know the date once scheduled "tomorrow" a year in the past.
+  const dateBlock = (await todayLine()) + "\n\n";
 
   let system: string;
   let userContent: string;
@@ -624,7 +705,7 @@ export async function streamVoiceReply(
       ACTIONS +
       CTX +
       MEM;
-    userContent = `${convoBlock}User says: ${question}`;
+    userContent = `${convoBlock}${dateBlock}User says: ${question}`;
   } else if (intent === "workspace") {
     const fmt = (kind: "task" | "event" | "note") =>
       listItems(tenantId, kind)
@@ -677,7 +758,7 @@ export async function streamVoiceReply(
       CTX +
       MEM;
     userContent =
-      `${convoBlock}Today's date: ${today}\n\n` +
+      `${convoBlock}${dateBlock}` +
       (calendarConfigured() ? `Google Calendar (next 14 days):\n${gcalBlock || "(no upcoming events)"}\n\n` : "") +
       `Local events:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
@@ -802,8 +883,8 @@ export async function streamVoiceReply(
       CTX +
       MEM;
     userContent = rows.length
-      ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
-      : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
+      ? `${convoBlock}${dateBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
+      : `${convoBlock}${dateBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
     publishUiContext(tenantId, "answer", null); // docs turn: no email belongs on screen
     // Conversation-anchored retrieval, ALWAYS on: a follow-up like "who are
@@ -844,8 +925,8 @@ export async function streamVoiceReply(
       CTX +
       MEM;
     userContent = hits.length
-      ? `${convoBlock}<sources>\n${block}\n</sources>\n\nQuestion: ${question}`
-      : `${convoBlock}No sources found.\n\nQuestion: ${question}`;
+      ? `${convoBlock}${dateBlock}<sources>\n${block}\n</sources>\n\nQuestion: ${question}`
+      : `${convoBlock}${dateBlock}No sources found.\n\nQuestion: ${question}`;
   }
 
   // Track whether any speech left the server: a failure before the first word
@@ -913,7 +994,7 @@ export async function streamVoiceReply(
         // A returned sentence is the server's truth (a failure, or the real
         // counts for a bulk action); it replaces whatever the model was about
         // to claim. Whether it reads as success decides the feed color.
-        const failed = replace !== null && !/^(Done|Filed|Booked|Cancelled|Removed)/.test(replace);
+        const failed = replace !== null && !/^(Done|Filed|Booked|Cancelled|Removed|Staged|Sent)/.test(replace);
         publishUiEvent(tenantId, {
           kind: "result",
           state: failed ? "fail" : "ok",

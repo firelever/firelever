@@ -328,16 +328,16 @@ export function App() {
       return (
         <div>
           {fe && (
-            <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10 }}>
+            <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10, border: fe.status === "compose" && !fe.sent_at ? "1px solid rgba(var(--accRGB),0.35)" : "none" }}>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>{fe.subject}</div>
               <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginBottom: 8 }}>
-                from {fe.from_addr}{fe.received_at ? " · " + fe.received_at.slice(0, 10) : ""}
-                {fe.sent_at ? <span style={{ color: "var(--ok)" }}> · REPLIED {fe.sent_at.slice(0, 10)}</span> : null}
+                {fe.status === "compose" ? <><span style={{ color: "var(--lab)" }}>NEW EMAIL</span> · to {fe.from_addr}</> : <>from {fe.from_addr}{fe.received_at ? " · " + fe.received_at.slice(0, 10) : ""}</>}
+                {fe.sent_at ? <span style={{ color: "var(--ok)" }}> · {fe.status === "compose" ? "SENT" : "REPLIED"} {fe.sent_at.slice(0, 10)}</span> : null}
               </div>
-              <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.55, maxHeight: 150, overflowY: "auto" }}>{fe.body}</div>
+              {fe.body && <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.55, maxHeight: 150, overflowY: "auto" }}>{fe.body}</div>}
               {fe.draft_reply && !fe.sent_at && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(var(--lineRGB),0.12)", fontSize: 12, color: "var(--mut2)", lineHeight: 1.5, maxHeight: 76, overflow: "hidden" }}>
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em", color: "var(--lab)" }}>DRAFT · </span>
+                <div style={{ marginTop: fe.body ? 8 : 0, paddingTop: fe.body ? 8 : 0, borderTop: fe.body ? "1px solid rgba(var(--lineRGB),0.12)" : "none", fontSize: 12, color: fe.status === "compose" ? "var(--mut)" : "var(--mut2)", lineHeight: 1.5, maxHeight: fe.status === "compose" ? 150 : 76, overflow: fe.status === "compose" ? "auto" : "hidden" }}>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.08em", color: "var(--lab)" }}>{fe.status === "compose" ? "AWAITING YOUR GO-AHEAD · " : "DRAFT · "}</span>
                   {fe.draft_reply}
                 </div>
               )}
