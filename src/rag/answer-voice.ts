@@ -863,6 +863,8 @@ export async function streamVoiceReply(
       "need", "needs", "read", "open", "show", "tell", "about", "what", "which", "that", "this", "have",
       "drafted", "draft", "drafts", "send", "sent", "newsletter", "newsletters", "spam", "from", "subject",
       "please", "want", "wanna", "check", "look", "there", "they", "them", "were", "does", "with",
+      "make", "sure", "just", "also", "going", "okay", "yeah", "well", "take", "give", "then", "been",
+      "some", "clean", "cleaned", "cleanup", "five", "four", "three", "last", "first", "next", "still",
     ]);
     const wordsOf = (s: string) =>
       s
@@ -879,14 +881,25 @@ export async function streamVoiceReply(
     // false positives ("ute" inside "execute" focused unrelated emails).
     const wordHit = (hay: string, w: string) =>
       new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(hay);
+    // Names usually live in the body's opening lines ("Hi, I'm Dana..."),
+    // not the sender address or subject — match against all three.
+    const hays = rows.map((r) => (r.from_addr + " " + r.subject + " " + r.body.slice(0, 250)).toLowerCase());
+    // Only DISTINCTIVE words may pin an email on screen: a word that appears
+    // across many inbox emails is conversation filler, not an entity ("make"
+    // in "make sure" once pinned a promo titled "Now make it yours").
+    const distinctive = (w: string) => {
+      let df = 0;
+      for (const h of hays) if (wordHit(h, w) && ++df > 4) return false;
+      return df > 0;
+    };
+    const nowWords = [...new Set(qNow)].filter(distinctive);
+    const pastWords = [...new Set(qPast)].filter(distinctive);
     const scored = rows
-      .map((r) => {
-        // Names usually live in the body's opening lines ("Hi, I'm Dana..."),
-        // not the sender address or subject — match against all three.
-        const hay = (r.from_addr + " " + r.subject + " " + r.body.slice(0, 250)).toLowerCase();
+      .map((r, i) => {
+        const hay = hays[i];
         let score = 0;
-        for (const w of new Set(qNow)) if (wordHit(hay, w)) score += 2;
-        for (const w of new Set(qPast)) if (wordHit(hay, w)) score += 1;
+        for (const w of nowWords) if (wordHit(hay, w)) score += 2;
+        for (const w of pastWords) if (wordHit(hay, w)) score += 1;
         return { r, score };
       })
       .filter((x) => x.score > 0)
@@ -896,7 +909,10 @@ export async function streamVoiceReply(
     // Surface the email under discussion, content included. "The latest email"
     // is an explicit recency reference; otherwise only a real entity match or
     // a pending draft may focus — never a silent most-recent fallback.
-    const wantsLatest = /\b(last|latest|newest|most recent)\b/.test(question.toLowerCase());
+    // "The latest email" pins the newest ONE; "the last five emails" is a
+    // list request and must not pin anything (it once pinned a receipt while
+    // Levi described the whole inbox).
+    const wantsLatest = /\b(?:last|latest|newest|most recent)\s+(?:e-?mail|message|one)\b/.test(question.toLowerCase());
     const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
     publishUiEvent(tenantId, { kind: "search", state: "ok", label: "Scanning inbox", n: rows.length });
     if (focus) publishUiEvent(tenantId, { kind: "note", label: `Focused: "${focus.subject.slice(0, 40)}"` });

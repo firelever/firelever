@@ -550,7 +550,21 @@ export function App() {
         </div>
 
         <div className="stage">
-          <Orb theme={theme} mode={mode} level={level} idleLabel={voiceReady ? (speakReplies ? "READY" : "MUTED") : "READY"} />
+          <Orb
+            theme={theme}
+            mode={mode}
+            level={level}
+            idleLabel={voiceReady ? (speakReplies ? "READY" : "MUTED") : "READY"}
+            caption={
+              reconnecting ? (
+                <span className="cap reconnect">
+                  <span className="spin" style={{ width: 11, height: 11 }} /> Levi is updating, reconnecting…
+                </span>
+              ) : caption ? (
+                <span className="cap">{caption}</span>
+              ) : null
+            }
+          />
           {rail.length > 0 && (
             <div className="activity">
               <div className="act-head">LIVE REASONING</div>
@@ -564,13 +578,6 @@ export function App() {
                 </div>
               ))}
             </div>
-          )}
-          {reconnecting ? (
-            <div className="caption reconnect">
-              <span className="spin" style={{ width: 11, height: 11 }} /> Levi is updating, reconnecting…
-            </div>
-          ) : (
-            caption && <div className="caption">{caption}</div>
           )}
           <div className="window-stack" style={{ transformStyle: "preserve-3d" }}>
             {WINDOWS.map((w) => (

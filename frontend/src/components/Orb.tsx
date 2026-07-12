@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { ORB_COLORS, ThemeName } from "../theme";
 
 export type OrbMode = "listening" | "hearing" | "thinking" | "responding" | "muted";
@@ -81,7 +81,7 @@ function modeUniform(m: OrbMode): number {
   return 0;
 }
 
-export function Orb({ theme, mode, level, name = "LEVI", idleLabel = "READY" }: { theme: ThemeName; mode: OrbMode; level: number; name?: string; idleLabel?: string }) {
+export function Orb({ theme, mode, level, name = "LEVI", idleLabel = "READY", caption }: { theme: ThemeName; mode: OrbMode; level: number; name?: string; idleLabel?: string; caption?: ReactNode }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ theme, mode, level });
@@ -161,6 +161,10 @@ export function Orb({ theme, mode, level, name = "LEVI", idleLabel = "READY" }: 
         {name} · {mode === "muted" ? idleLabel : LABEL[mode]}
       </div>
       <canvas ref={waveRef} width={150} height={22} style={{ width: 130, height: 22 }} />
+      {/* Reserved caption slot: part of the assembly's flow, so the spoken
+          caption / reconnect notice can never overlap the orb or waveform,
+          and the layout doesn't jump when a caption appears. */}
+      <div className="orb-caption">{caption}</div>
       <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
     </div>
   );

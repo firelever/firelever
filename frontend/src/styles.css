@@ -97,8 +97,8 @@ body {
      answer grows the card up to max-height and then scrolls inside it. Anchored
      below the orb so it never overlaps, and capped so the bottom clears the
      prompt bar across laptop viewport heights. */
-  position: absolute; width: 512px; height: auto; min-height: 132px; max-height: min(600px, calc(100vh - 412px));
-  left: -256px; top: 208px;
+  position: absolute; width: 512px; height: auto; min-height: 132px; max-height: min(600px, calc(100vh - 426px));
+  left: -256px; top: 222px;
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, rgba(var(--s1), 0.96), rgba(var(--s4), 0.96));
   border: 1px solid rgba(var(--lineRGB), 0.1); border-radius: 20px;
@@ -191,17 +191,22 @@ body {
 @keyframes actIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
 @keyframes actPulse { 50% { opacity: 0.3; } }
 
-/* Spoken caption: the sentence Levi is saying right now, under the orb. */
-.caption {
-  position: absolute; left: 50%; transform: translateX(-50%); top: 168px;
-  max-width: 560px; padding: 6px 14px; border-radius: 12px;
+/* Spoken caption: the sentence Levi is saying right now. Lives in a RESERVED
+   slot inside the orb assembly (rendered by Orb), so it can never overlap the
+   orb, the waveform, or the window card, and nothing jumps when it appears. */
+.orb-caption {
+  height: 30px; display: flex; align-items: center; justify-content: center;
+  max-width: min(620px, 88vw); pointer-events: none;
+}
+.cap {
+  padding: 5px 14px; border-radius: 12px;
   font-size: 12.5px; color: var(--tx2); text-align: center;
   background: rgba(var(--s2), 0.75); border: 1px solid rgba(var(--lineRGB), 0.1);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  z-index: 7; animation: capIn .3s ease-out; pointer-events: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  animation: capIn .3s ease-out;
 }
-@keyframes capIn { from { opacity: 0; transform: translate(-50%, 5px); } to { opacity: 1; transform: translate(-50%, 0); } }
-.caption.reconnect {
+@keyframes capIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.cap.reconnect {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--warn); border-color: rgba(var(--accRGB), 0.3);
 }
@@ -240,15 +245,15 @@ body {
   .clock, .themedots, .kbd { display: none; }
   /* No room for the reasoning rail on a phone; the caption carries the sync. */
   .activity { display: none; }
-  .caption { top: 150px; max-width: calc(100vw - 32px); font-size: 11.5px; }
+  .cap { font-size: 11.5px; }
   .center { flex: 1; min-height: 0; }
   .orb-assembly { top: 10px; }
   .card {
     width: calc(100vw - 24px);
     left: calc((24px - 100vw) / 2);
-    top: 190px;
+    top: 212px;
     min-height: 110px;
-    max-height: calc(100dvh - 372px);
+    max-height: calc(100dvh - 394px);
     padding: 16px;
   }
   .chips { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
