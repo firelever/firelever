@@ -146,6 +146,22 @@ in their mail client for the flows Levi owns:
   outbound-mail log table for composed/forwarded sends, read/unread state,
   unsubscribe automation, and user-defined custom categories.
 
+**Calendar agency (M, amendment 2026-07-12, ADR-016):** when Google Calendar
+is connected, scheduling by voice operates on the real calendar: create with
+duration, Google Meet link, and explicit-address invites; reschedule, move,
+rename, extend, or add Meet to existing events; cancel (attendees notified,
+recoverable from calendar trash). Confirmations are server-truth built from
+Google's response, with times spoken in human form. Unconfigured, Levi falls
+back to the local schedule and says so plainly — implying a real booking that
+didn't happen is the same defect class as capability hallucination.
+
+**Live activity stream (M, amendment 2026-07-12, ADR-015):** the brain
+publishes typed events for every real step (routing, retrieval, action
+execution with truthful results, spoken sentences); the UI renders them as a
+live reasoning rail, a spoken-sentence caption, and card choreography. Bulk
+action confirmations (archive sweep, categorize) are server-authored counts
+that replace the model's own claim.
+
 **Persistent memory (M):** user corrections and confirmed facts persist per
 tenant and override OCR'd document text in every answer path. Corrections that
 contradict clear, consistent source evidence get exactly one evidence-citing
