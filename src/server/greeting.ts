@@ -77,8 +77,8 @@ export async function buildGreeting(tenantId: string): Promise<string> {
     "What's first?",
   ]);
 
-  // Vary the shape too: hook-led, invite-led, or both when there's real news.
-  const hook = hooks.length ? pick(hooks) : null;
-  if (hook && Math.random() < 0.7) return `${opener} ${hook} ${Math.random() < 0.5 ? invite : ""}`.trim();
+  // When there's real news, say it (variety comes from which hook and whether
+  // the invite follows). "All caught up" may ONLY be said when it's true.
+  if (hooks.length) return `${opener} ${pick(hooks)} ${Math.random() < 0.5 ? invite : ""}`.trim();
   return `${opener} ${pick(["The inbox is quiet.", "All caught up here.", "Everything's tidy on my end."])} ${invite}`.trim();
 }
