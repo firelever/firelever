@@ -11,7 +11,7 @@ import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
 import { draftReply as engineDraftReply } from "../triage/engine.js";
-import { publishUiContext, UiEmail } from "../server/ui-context.js";
+import { publishUiContext, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import db from "./store.js";
 
@@ -42,7 +42,12 @@ type Action =
   | { type: "draft_reply"; email_id: number; guidance?: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
   | { type: "complete_task"; id: number }
-  | { type: "remember"; note: string };
+  | { type: "remember"; note: string }
+  | { type: "show_window"; window: string }
+  | { type: "set_theme"; theme: string };
+
+const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract"];
+const THEMES = ["ember", "graphite", "nebula", "signal", "ivory"];
 
 const ACTIONS =
   " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
@@ -53,6 +58,8 @@ const ACTIONS =
   '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> writes a grounded draft into the Replies window for review instead of sending; use it when the user says draft or wants to review before sending. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
+  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Replies window, notes is Prep). ' +
+  '<<action:{"type":"set_theme","theme":"ember|graphite|nebula|signal|ivory"}>> switches the color theme when asked. ' +
   '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
   "(a name, a spelling, a number, a preference); the note should state the correct fact and the wrong variant, " +
   'e.g. "The buyer entity is BDLP Enterprises LLC; OCR sometimes misreads it as BRLP". ' +
@@ -64,6 +71,16 @@ const ACTIONS =
   '"User confirms the deposit is X, though the contract consistently shows Y". Never argue past one round; the user has final say. ' +
   "The system executes the tag before your words are spoken, so phrase the confirmation as already done. " +
   "NEVER say you sent, added, completed, scheduled, or remembered anything without its action tag. For anything outside these actions, say you can't do that yet.";
+
+// The model's correction channel for the deterministic router: it sees both
+// the question and the data it was handed, so it is the last line of defense
+// against misroutes — and it can pin the exact entity on screen.
+const CTX =
+  " SCREEN CONTEXT: A window on screen follows this conversation. If the data you were given is the WRONG DOMAIN " +
+  "for the user's request (they asked about email but you got document sources, asked about documents but got the " +
+  'inbox, and so on), output ONLY <<ctx:{"reroute":"inbox"}>> (or "docs" or "workspace") and nothing else — the ' +
+  "system redoes the turn with the right data. When your answer is mainly about ONE specific email from the " +
+  'full-content list, start with <<ctx:{"email_id":ID}>> so it appears on screen.';
 
 // Email bodies get shown in the UI and read aloud; angle-bracketed and long
 // tracking URLs (newsletter plumbing) are pure noise in both registers.
@@ -156,6 +173,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!a.title?.trim()) return "I didn't catch what to add, so nothing was saved.";
       const kind = a.type.slice(4);
       createItem(tenantId, kind, a.title.trim(), a.body?.trim() || undefined, a.at?.trim() || undefined);
+      invalidateLexicon(tenantId); // new entity words exist now
       publishUiContext(tenantId, kind === "task" ? "tasks" : kind === "event" ? "schedule" : "notes");
       return null;
     }
@@ -169,19 +187,41 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       addMemory(tenantId, a.note);
       return null;
     }
+    if (a.type === "show_window") {
+      if (!WINDOWS.includes(a.window)) return "I don't have a window by that name.";
+      publishUiContext(tenantId, a.window);
+      return null;
+    }
+    if (a.type === "set_theme") {
+      if (!THEMES.includes(a.theme)) return "The themes are ember, graphite, nebula, signal, and ivory.";
+      publishUiContext(tenantId, null, undefined, a.theme);
+      return null;
+    }
     return "I don't know how to do that yet, so nothing happened.";
   } catch (e) {
     return "That didn't go through: " + (e instanceof Error ? e.message : "unknown error") + ". Nothing was changed.";
   }
 }
 
-// Instant intent routing over the whole conversation, no model call. A turn
-// with no strong signal of its own ("yes, go by sender") sticks with the most
-// recent domain in the conversation instead of defaulting to documents.
+// ---- context engine: intent routing ----
+// Three deterministic layers, all zero-latency, then a model correction
+// channel (<<ctx:...>>) as the backstop for whatever they miss:
+//   1. domain vocabulary ("inbox", "contract", "schedule"),
+//   2. a live per-tenant LEXICON — the names actually in this tenant's world
+//      (senders, document names, task words), so "what did Dana say?" routes
+//      to inbox because Dana is in THIS inbox,
+//   3. routed-intent memory — follow-ups stick to what the router actually
+//      chose last turn, never re-parsed from prose.
+// Negated mentions ("not the inbox, the contract") are masked before matching.
 type Intent = "chat" | "inbox" | "docs" | "workspace";
 const WORKSPACE_RE = /\b(schedules?|calendars?|appointments?|meetings?|events?|tasks?|to-?dos?|notes?|reminders?)\b/;
 const INBOX_RE = /\b(inbox|e-?mails?|reply|replies|senders?|unread|mailbox|triage|newsletters?|spam|messages?|inquir(y|ies)|correspondence)\b/;
 const DOCS_RE = /\b(documents?|contracts?|clauses?|agreements?|pdf|files?|polic(y|ies)|sellers?|buyers?|closing|deposit|price|propert(y|ies)|street|inspection|addend(um|a)|warranty)\b/;
+
+// Mask "not/no/don't <phrase>" so negated domains don't count as signals.
+function maskNegations(s: string): string {
+  return s.replace(/\b(?:no|not|don'?t|never|stop|forget)\b(?:\s+(?:the|my|that|about|to|a))?\s+\w+/g, " ");
+}
 
 function strongSignal(s: string): Intent | null {
   if (WORKSPACE_RE.test(s)) return "workspace";
@@ -190,19 +230,91 @@ function strongSignal(s: string): Intent | null {
   return null;
 }
 
-function routeIntent(question: string, history: VoiceTurn[]): Intent {
-  const s = question.toLowerCase().trim();
+// Per-tenant lexicon of real entity words, rebuilt at most once a minute.
+// This is what lets the router understand names instead of only nouns.
+const GENERIC = new Set([
+  "gmail", "yahoo", "outlook", "hotmail", "icloud", "google", "noreply", "no-reply", "notifications",
+  "info", "hello", "support", "team", "mail", "admin", "update", "updates", "account", "workspace",
+  "uploads", "docs", "images", "week", "this", "your", "with", "from", "about",
+]);
+interface Lexicon { inbox: Set<string>; docs: Set<string>; ws: Set<string> }
+const lexCache = new Map<string, { at: number; lex: Lexicon }>();
+
+function tokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !GENERIC.has(w));
+}
+
+function lexiconFor(tenantId: string): Lexicon {
+  const hit = lexCache.get(tenantId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.lex;
+  const lex: Lexicon = { inbox: new Set(), docs: new Set(), ws: new Set() };
+  try {
+    const emails = db
+      .prepare(`SELECT from_addr, subject, body FROM inbound_emails WHERE tenant_id = ? ORDER BY id DESC LIMIT 300`)
+      .all(tenantId) as { from_addr: string; subject: string; body: string }[];
+    for (const e of emails) {
+      tokens(e.from_addr).forEach((t) => lex.inbox.add(t));
+      tokens(e.subject).forEach((t) => lex.inbox.add(t));
+      // sender names usually live in the first line of real emails ("Hi, I'm Dana...")
+      tokens(e.body.slice(0, 200)).forEach((t) => lex.inbox.add(t));
+    }
+    const docs = db.prepare(`SELECT path, title FROM documents WHERE tenant_id = ?`).all(tenantId) as {
+      path: string;
+      title: string | null;
+    }[];
+    for (const d of docs) {
+      tokens(d.path.split("/").pop() ?? "").forEach((t) => lex.docs.add(t));
+      tokens(d.title ?? "").forEach((t) => lex.docs.add(t));
+    }
+    for (const kind of ["task", "event", "note"] as const) {
+      for (const i of listItems(tenantId, kind)) tokens(i.title).forEach((t) => lex.ws.add(t));
+    }
+  } catch {
+    /* lexicon is best-effort */
+  }
+  lexCache.set(tenantId, { at: Date.now(), lex });
+  return lex;
+}
+
+// Exported for the action layer: entity words changed (new task, new draft),
+// so the lexicon should refresh on the next turn.
+function invalidateLexicon(tenantId: string): void {
+  lexCache.delete(tenantId);
+}
+
+function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): Intent {
+  const raw = question.toLowerCase().trim();
+  const s = maskNegations(raw);
   if (
-    (s.split(/\s+/).length <= 2 && !strongSignal(s)) ||
-    /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))\b/.test(s) ||
-    /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(s)
+    (raw.split(/\s+/).length <= 2 && !strongSignal(s)) ||
+    /^(hi|hey|hello|yo|sup|thanks|thank you|good (morning|afternoon|evening))\b/.test(raw) ||
+    /\b(who are you|what can you do|what do you do|how are you|your name)\b/.test(raw)
   )
     return "chat";
+  // Layer 1: explicit domain vocabulary (negations masked).
   const own = strongSignal(s);
   if (own) return own;
-  // No signal of its own: a follow-up. Stay in the conversation's last domain.
+  // Layer 2: the tenant's own entities. Score each domain by distinct hits.
+  const lex = lexiconFor(tenantId);
+  const qTokens = tokens(s);
+  const score = (set: Set<string>) => qTokens.filter((t) => set.has(t)).length;
+  const scores: [Intent, number][] = [
+    ["inbox", score(lex.inbox)],
+    ["docs", score(lex.docs)],
+    ["workspace", score(lex.ws)],
+  ];
+  scores.sort((a, b) => b[1] - a[1]);
+  if (scores[0][1] > 0 && scores[0][1] > scores[1][1]) return scores[0][0];
+  // Layer 3: what did we actually route last turn? (Server-side memory, with
+  // a history re-scan only as the cold-restart fallback.)
+  const last = getLastIntent(tenantId);
+  if (last === "inbox" || last === "docs" || last === "workspace") return last;
   for (let i = history.length - 1; i >= 0; i--) {
-    const inherited = strongSignal(history[i].text.toLowerCase());
+    if (history[i].role !== "user") continue; // never route on assistant prose
+    const inherited = strongSignal(maskNegations(history[i].text.toLowerCase()));
     if (inherited) return inherited;
   }
   return "docs";
@@ -225,9 +337,11 @@ export async function streamVoiceReply(
   tenantId: string,
   question: string,
   onDelta: (t: string) => void | Promise<void>,
-  history: VoiceTurn[] = []
+  history: VoiceTurn[] = [],
+  forced?: Intent // set on a model-requested reroute; never recurses twice
 ): Promise<void> {
-  const intent = routeIntent(question, history);
+  const intent = forced ?? routeIntent(tenantId, question, history);
+  if (intent !== "chat") setLastIntent(tenantId, intent);
   const convo = history
     .slice(-6)
     .map((h) => `${h.role}: ${h.text.slice(0, 300)}`)
@@ -244,6 +358,7 @@ export async function streamVoiceReply(
       "If asked what you can do, mention answering questions about their documents, contracts, inbox, and schedule. " +
       SPEAK +
       ACTIONS +
+      CTX +
       MEM;
     userContent = `${convoBlock}User says: ${question}`;
   } else if (intent === "workspace") {
@@ -273,6 +388,7 @@ export async function streamVoiceReply(
       "and offer to add an item. " +
       SPEAK +
       ACTIONS +
+      CTX +
       MEM;
     userContent =
       `${convoBlock}Today's date: ${today}\n\nEvents:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
@@ -317,20 +433,34 @@ export async function streamVoiceReply(
       "drafted", "draft", "drafts", "send", "sent", "newsletter", "newsletters", "spam", "from", "subject",
       "please", "want", "wanna", "check", "look", "there", "they", "them", "were", "does", "with",
     ]);
-    const qText = [question, ...history.slice(-4).map((h) => h.text)].join(" ").toLowerCase();
-    const qWords = qText
-      .split(/[^a-z0-9@.]+/)
-      .map((w) => w.replace(/^[.@]+|[.@]+$/g, "")) // dots stay for fly.io, not sentence punctuation
-      .filter((w) => w.length > 3 && !STOP.has(w));
-    const matches = rows.filter((r) => {
-      const hay = (r.from_addr + " " + r.subject).toLowerCase();
-      return qWords.some((w) => hay.includes(w));
-    });
+    const wordsOf = (s: string) =>
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9@.]+/)
+        .map((w) => w.replace(/^[.@]+|[.@]+$/g, "")) // dots stay for fly.io, not sentence punctuation
+        .filter((w) => w.length > 3 && !STOP.has(w));
+    // The current question outweighs conversation residue: an entity named NOW
+    // beats one mentioned two turns ago.
+    const qNow = wordsOf(question);
+    const qPast = wordsOf(history.slice(-4).map((h) => h.text).join(" "));
+    const qWords = [...new Set([...qNow, ...qPast])];
+    const scored = rows
+      .map((r) => {
+        const hay = (r.from_addr + " " + r.subject).toLowerCase();
+        let score = 0;
+        for (const w of new Set(qNow)) if (hay.includes(w)) score += 2;
+        for (const w of new Set(qPast)) if (hay.includes(w)) score += 1;
+        return { r, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score); // rows are newest-first, sort is stable → recency tiebreak
+    const matches = scored.map((x) => x.r);
     const drafted = rows.filter((r) => r.draft_reply);
-    // Surface the email under discussion in the inbox window, content included.
-    // Only when something actually matches — never fall back to "most recent
-    // email", which surfaces a random newsletter out of context.
-    const focus = matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
+    // Surface the email under discussion, content included. "The latest email"
+    // is an explicit recency reference; otherwise only a real entity match or
+    // a pending draft may focus — never a silent most-recent fallback.
+    const wantsLatest = /\b(last|latest|newest|most recent)\b/.test(question.toLowerCase());
+    const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
     publishUiContext(
       tenantId,
       "inbox",
@@ -373,6 +503,7 @@ export async function streamVoiceReply(
       "they name the sender. " +
       SPEAK +
       ACTIONS +
+      CTX +
       MEM;
     userContent = rows.length
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
@@ -398,6 +529,7 @@ export async function streamVoiceReply(
       "briefly, and if the user confirms which is right, remember it. " +
       SPEAK +
       ACTIONS +
+      CTX +
       MEM;
     userContent = hits.length
       ? `${convoBlock}<sources>\n${block}\n</sources>\n\nQuestion: ${question}`
@@ -412,6 +544,13 @@ export async function streamVoiceReply(
     await onDelta(t);
   };
 
+  // The reply stream is multiplexed: it may open with up to two structured
+  // tags — <<action:{...}>> (do something) and/or <<ctx:{...}>> (fix the
+  // routing or pin an entity on screen) — followed by speech. Tags are parsed
+  // out and executed BEFORE any speech is released; a ctx reroute aborts the
+  // turn so it can re-run against the right data.
+  let reroute: Intent | null = null;
+
   const runOnce = async (): Promise<void> => {
     const stream = client.messages.stream({
       model: VOICE_MODEL,
@@ -421,51 +560,14 @@ export async function streamVoiceReply(
       messages: [{ role: "user", content: userContent }],
     });
 
-    // Action-aware streaming: when the reply opens with an action tag, hold the
-    // stream, execute the action FIRST, then let the confirmation speak. On
-    // failure, speak the failure instead of the model's premature confirmation.
-    const HEAD = "<<action:";
+    const HEADS = ["<<action:", "<<ctx:"];
     let mode: "detect" | "collect" | "pass" = "detect";
     let buf = "";
-    for await (const ev of stream) {
-      if (ev.type !== "content_block_delta" || ev.delta.type !== "text_delta") continue;
-      const t = ev.delta.text;
-      if (mode === "pass") {
-        await emit(t);
-        continue;
-      }
-      buf += t;
-      if (mode === "detect") {
-        if (buf.length < HEAD.length) {
-          if (HEAD.startsWith(buf)) continue; // still could be a tag
-          mode = "pass";
-          await emit(buf);
-          buf = "";
-          continue;
-        }
-        if (buf.startsWith(HEAD)) mode = "collect";
-        else {
-          mode = "pass";
-          await emit(buf);
-          buf = "";
-          continue;
-        }
-      }
-      if (mode === "collect") {
-        const end = buf.indexOf(">>");
-        if (end < 0) {
-          if (buf.length > 1500) {
-            // runaway tag; bail out and just speak it
-            mode = "pass";
-            await emit(buf);
-            buf = "";
-          }
-          continue;
-        }
-        const raw = buf.slice(HEAD.length, end);
-        const rest = buf.slice(end + 2).replace(/^\s+/, "");
-        buf = "";
-        mode = "pass";
+    let tagsSeen = 0;
+
+    // Returns "stop" when the turn must end (action failure spoken, or reroute).
+    const handleTag = async (kind: string, raw: string): Promise<"stop" | "go"> => {
+      if (kind === "action") {
         let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
         try {
           failure = await executeAction(tenantId, JSON.parse(raw) as Action);
@@ -474,12 +576,99 @@ export async function streamVoiceReply(
         }
         if (failure) {
           await emit(failure);
-          return; // suppress the model's now-false confirmation
+          return "stop"; // suppress the model's now-false confirmation
         }
-        if (rest) await emit(rest);
+        return "go";
+      }
+      // ctx: routing correction / entity focus. Malformed ctx is ignored.
+      try {
+        const c = JSON.parse(raw) as { reroute?: string; email_id?: number; window?: string };
+        if (c.reroute && !forced && !emitted && ["inbox", "docs", "workspace"].includes(c.reroute)) {
+          reroute = c.reroute as Intent;
+          return "stop";
+        }
+        if (typeof c.email_id === "number") {
+          const row = db
+            .prepare(
+              `SELECT id, from_addr, subject, body, received_at, draft_reply, status, sent_at FROM inbound_emails
+               WHERE id = ? AND tenant_id = ?`
+            )
+            .get(c.email_id, tenantId) as UiEmail | undefined;
+          if (row) publishUiContext(tenantId, "inbox", { ...row, body: cleanBody(row.body).slice(0, 1200) });
+        } else if (c.window && WINDOWS.includes(c.window)) {
+          publishUiContext(tenantId, c.window);
+        }
+      } catch {
+        /* ignore malformed ctx */
+      }
+      return "go";
+    };
+
+    const feed = async (t: string): Promise<"stop" | "go"> => {
+      if (mode === "pass") {
+        await emit(t);
+        return "go";
+      }
+      buf += t;
+      // Loop: one delta can complete a tag AND begin the next (or the speech).
+      for (;;) {
+        if (mode === "detect") {
+          const full = HEADS.find((h) => buf.startsWith(h));
+          if (full) {
+            mode = "collect";
+          } else if (HEADS.some((h) => h.startsWith(buf))) {
+            return "go"; // still a possible tag prefix; wait for more
+          } else {
+            mode = "pass";
+            const out = buf;
+            buf = "";
+            if (out) await emit(out);
+            return "go";
+          }
+        }
+        // collect
+        const head = HEADS.find((h) => buf.startsWith(h))!;
+        const end = buf.indexOf(">>");
+        if (end < 0) {
+          if (buf.length > 1500) {
+            // runaway tag; bail out and just speak it
+            mode = "pass";
+            const out = buf;
+            buf = "";
+            await emit(out);
+          }
+          return "go";
+        }
+        const kind = head.slice(2, head.length - 1); // "action" | "ctx"
+        const raw = buf.slice(head.length, end);
+        buf = buf.slice(end + 2).replace(/^\s+/, "");
+        tagsSeen++;
+        if ((await handleTag(kind, raw)) === "stop") return "stop";
+        if (tagsSeen >= 2) {
+          mode = "pass";
+          const out = buf;
+          buf = "";
+          if (out) await emit(out);
+          return "go";
+        }
+        mode = "detect";
+        if (!buf) return "go";
+        // else: loop again — buf may already hold the next tag or the speech
+      }
+    };
+
+    for await (const ev of stream) {
+      if (ev.type !== "content_block_delta" || ev.delta.type !== "text_delta") continue;
+      if ((await feed(ev.delta.text)) === "stop") {
+        try {
+          (stream as any).controller?.abort?.();
+        } catch {
+          /* stream may already be done */
+        }
+        return;
       }
     }
-    if (buf && mode !== "pass") await emit(buf); // stream ended mid-detect
+    if (buf && (mode as string) !== "pass") await emit(buf); // stream ended mid-detect (mode mutates inside feed)
   };
 
   try {
@@ -488,5 +677,11 @@ export async function streamVoiceReply(
     if (emitted) throw e; // partial speech already out — don't double-speak
     await new Promise((r) => setTimeout(r, 600));
     await runOnce(); // one transparent retry for transient API failures
+  }
+
+  // Model-requested reroute: the deterministic router picked the wrong domain
+  // and the model could tell from the data. Re-run once with the right one.
+  if (reroute && !emitted) {
+    await streamVoiceReply(tenantId, question, onDelta, history, reroute);
   }
 }

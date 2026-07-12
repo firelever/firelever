@@ -160,6 +160,7 @@ export function App() {
           if (!ctx.seq || ctx.seq === uiSeqRef.current) return;
           uiSeqRef.current = ctx.seq;
           if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
+          if (ctx.theme && (THEME_ORDER as readonly string[]).includes(ctx.theme)) setTheme(ctx.theme as ThemeName);
           if (ctx.window) {
             promote(ctx.window);
             if (ctx.window === "inbox") loadTriage();
