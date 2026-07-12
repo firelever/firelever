@@ -11,8 +11,8 @@ import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
 import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js";
-import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
-import { publishUiContext, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
+import { previewCleanup, applyCleanup, labelInGmail } from "../triage/cleanup.js";
+import { publishUiContext, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import db from "./store.js";
 
@@ -124,7 +124,33 @@ function duplicateSend(key: string, ttlMs = 120_000): boolean {
   return false;
 }
 
-// Returns a spoken failure sentence, or null when the action succeeded.
+// Short present-tense label for the activity feed while an action executes.
+function actionLabel(a: Action): string {
+  switch (a.type) {
+    case "send_reply": return `Sending reply on email ${a.email_id}`;
+    case "stage_reply": return `Staging reply for review`;
+    case "compose_email": return `Sending email to ${a.to}`;
+    case "draft_reply": return `Drafting a reply`;
+    case "forward_email": return `Forwarding email to ${a.to}`;
+    case "archive_email": return `Archiving email in Gmail`;
+    case "archive_newsletters": return `Sweeping newsletters to archive`;
+    case "categorize_email": return `Filing as ${a.category?.replace(/_/g, " ")}`;
+    case "add_task": return `Adding task`;
+    case "add_event": return `Adding event`;
+    case "add_note": return `Adding note`;
+    case "complete_task": return `Checking off task`;
+    case "remember": return `Saving to memory`;
+    case "show_window": return `Opening ${a.window} window`;
+    case "set_theme": return `Switching theme to ${a.theme}`;
+    default: return "Working";
+  }
+}
+
+// Returns a spoken sentence that REPLACES the model's confirmation, or null
+// when the model's own confirmation may stand. Two cases return a sentence:
+// failures, and count-bearing bulk actions (archive, categorize) — for those
+// the model would otherwise invent a confirmation ("swept it all!") that the
+// server never verified, so the server speaks its own ground truth instead.
 async function executeAction(tenantId: string, a: Action): Promise<string | null> {
   try {
     if (a.type === "send_reply") {
@@ -248,16 +274,23 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         .prepare(`SELECT id, from_addr, subject FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
         .get(a.email_id, tenantId) as { id: number } | undefined;
       if (!row) return "I couldn't find that email, so nothing was archived.";
-      await applyCleanup(tenantId, [a.email_id]); // reversible Gmail archive; marks handled locally either way
+      const res = await applyCleanup(tenantId, [a.email_id]);
       publishUiContext(tenantId, "inbox", null);
-      return null;
+      // Server truth replaces the model's confirmation: archived means the
+      // Gmail move happened, not that we hoped it did.
+      return res.archived === 1
+        ? "Done, it's archived out of your Gmail inbox."
+        : "That one isn't in your Gmail inbox anymore, so there was nothing to archive.";
     }
     if (a.type === "archive_newsletters") {
       const ids = previewCleanup(tenantId).map((i) => i.id);
       if (!ids.length) return "There's no newsletter clutter left to archive, the inbox is already tidy.";
-      await applyCleanup(tenantId, ids);
+      const res = await applyCleanup(tenantId, ids);
       publishUiContext(tenantId, "inbox", null);
-      return null;
+      const missing = res.missing ? ` ${res.missing} I couldn't find in the inbox anymore, so I left ${res.missing === 1 ? "it" : "those"} alone.` : "";
+      return res.archived
+        ? `Done. I archived ${res.archived} newsletter${res.archived === 1 ? "" : "s"} in Gmail.${missing}`
+        : `I didn't archive anything.${missing || " The newsletters weren't in your Gmail inbox."}`;
     }
     if (a.type === "categorize_email") {
       if (!(CATEGORIES as readonly string[]).includes(a.category))
@@ -269,7 +302,13 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       updateEmail(row.id, { category: a.category });
       invalidateLexicon(tenantId);
       publishUiContext(tenantId, "inbox", { ...row, body: cleanBody(row.body).slice(0, 1200) });
-      return null;
+      // A category the user can't see in Gmail doesn't count as filed — apply
+      // the real label there too, and say plainly when only half of it landed.
+      const spoken = a.category.replace(/_/g, " ");
+      const labeled = await labelInGmail(tenantId, row.id, a.category).catch(() => false);
+      return labeled
+        ? `Filed under ${spoken}. You'll see it labeled FireLever ${spoken} in Gmail.`
+        : `I recorded it as ${spoken} here, but that message isn't in your Gmail inbox anymore, so no label was applied there.`;
     }
     if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
       if (!a.title?.trim()) return "I didn't catch what to add, so nothing was saved.";
@@ -461,6 +500,12 @@ export async function streamVoiceReply(
 ): Promise<void> {
   const intent = forced ?? routeIntent(tenantId, question, history);
   if (intent !== "chat") setLastIntent(tenantId, intent);
+  // Narrate the routing decision to the live activity feed — unless this is a
+  // reroute/re-search re-run, which announces itself where it's requested.
+  if (!forced && !searchOverride && intent !== "chat") {
+    const domain = intent === "docs" ? "documents" : intent;
+    publishUiEvent(tenantId, { kind: "route", state: "ok", label: `"${question.slice(0, 46)}${question.length > 46 ? "…" : ""}" → ${domain}` });
+  }
   const convo = history
     .slice(-6)
     .map((h) => `${h.role}: ${h.text.slice(0, 300)}`)
@@ -501,6 +546,7 @@ export async function streamVoiceReply(
     const pick = (s: string) =>
       /\b(tasks?|to-?dos?|check(ed)? off|reminders?)\b/.test(s) ? "tasks" : /\bnotes?\b/.test(s) ? "notes" : /\b(schedules?|calendars?|appointments?|meetings?|events?)\b/.test(s) ? "schedule" : null;
     publishUiContext(tenantId, pick(wsText) ?? pick(lastUserText) ?? "schedule", null);
+    publishUiEvent(tenantId, { kind: "search", state: "ok", label: "Loading schedule, tasks, and notes" });
     system =
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
@@ -586,6 +632,8 @@ export async function streamVoiceReply(
     // a pending draft may focus — never a silent most-recent fallback.
     const wantsLatest = /\b(last|latest|newest|most recent)\b/.test(question.toLowerCase());
     const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
+    publishUiEvent(tenantId, { kind: "search", state: "ok", label: "Scanning inbox", n: rows.length });
+    if (focus) publishUiEvent(tenantId, { kind: "note", label: `Focused: "${focus.subject.slice(0, 40)}"` });
     publishUiContext(
       tenantId,
       "inbox",
@@ -651,7 +699,11 @@ export async function streamVoiceReply(
       const base = question.split(/\s+/).length < 5 && prevUser ? `${prevUser} ${question}` : question;
       query = anchors.length ? `${base}\n${anchors.join(" ")}` : base;
     }
+    const qLine = query.split("\n")[0];
+    publishUiEvent(tenantId, { kind: "search", state: "run", label: `Searching documents: ${qLine.slice(0, 50)}${qLine.length > 50 ? "…" : ""}` });
     const hits = await search(tenantId, query, 40, getEmbedder(), "hybrid").catch(() => []);
+    const docNames = [...new Set(hits.map((h) => h.document_path.split("/").pop() ?? ""))].slice(0, 2).join(", ");
+    publishUiEvent(tenantId, { kind: "sources", state: hits.length ? "ok" : "fail", n: hits.length, label: hits.length ? `${hits.length} passages · ${docNames}` : "No passages found" });
     const block = hits
       .map((s, i) => `[${i + 1}] ${s.document_path}${s.heading ? " › " + s.heading : ""}\n${s.text.slice(0, 800)}`)
       .join("\n\n");
@@ -675,9 +727,27 @@ export async function streamVoiceReply(
 
   // Track whether any speech left the server: a failure before the first word
   // can be retried transparently; after that, the error must surface.
+  // Each completed sentence is also published as a "speak" event, so the
+  // screen can caption exactly what Levi is saying as he says it.
   let emitted = false;
+  let sentBuf = "";
+  const flushSpeak = (force = false) => {
+    for (;;) {
+      const m = sentBuf.match(/[.!?…](\s|$)/);
+      if (!m || m.index === undefined) break;
+      const s = sentBuf.slice(0, m.index + 1).trim();
+      sentBuf = sentBuf.slice(m.index + 1).trimStart();
+      if (s.length > 2) publishUiEvent(tenantId, { kind: "speak", label: s.slice(0, 140) });
+    }
+    if (force && sentBuf.trim().length > 2) {
+      publishUiEvent(tenantId, { kind: "speak", label: sentBuf.trim().slice(0, 140) });
+      sentBuf = "";
+    }
+  };
   const emit = async (t: string) => {
     emitted = true;
+    sentBuf += t;
+    flushSpeak();
     await onDelta(t);
   };
 
@@ -708,15 +778,27 @@ export async function streamVoiceReply(
     const handleTag = async (kind: string, raw: string): Promise<"stop" | "go"> => {
       if (kind === "action") {
         acted = true; // side effects may occur from here — no turn regeneration
-        let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
+        let replace: string | null = "I couldn't make sense of that request, so nothing happened.";
+        let parsed: Action | null = null;
         try {
-          failure = await executeAction(tenantId, JSON.parse(raw) as Action);
+          parsed = JSON.parse(raw) as Action;
+          publishUiEvent(tenantId, { kind: "action", state: "run", label: actionLabel(parsed) });
+          replace = await executeAction(tenantId, parsed);
         } catch {
-          /* failure message stands */
+          /* replace message stands */
         }
-        if (failure) {
-          await emit(failure);
-          return "stop"; // suppress the model's now-false confirmation
+        // A returned sentence is the server's truth (a failure, or the real
+        // counts for a bulk action); it replaces whatever the model was about
+        // to claim. Whether it reads as success decides the feed color.
+        const failed = replace !== null && !/^(Done|Filed)/.test(replace);
+        publishUiEvent(tenantId, {
+          kind: "result",
+          state: failed ? "fail" : "ok",
+          label: replace ? replace.slice(0, 90) : parsed ? `${actionLabel(parsed)} — done` : "Done",
+        });
+        if (replace) {
+          await emit(replace);
+          return "stop"; // suppress the model's unverified confirmation
         }
         return "go";
       }
@@ -728,12 +810,14 @@ export async function streamVoiceReply(
         // empty reply → "Brain returned no response").
         if (c.reroute && c.reroute !== intent && !forced && !emitted && ["inbox", "docs", "workspace"].includes(c.reroute)) {
           reroute = c.reroute as Intent;
+          publishUiEvent(tenantId, { kind: "route", state: "run", label: `Wrong data — rerouting to ${c.reroute === "docs" ? "documents" : c.reroute}` });
           return "stop";
         }
         // Model-requested re-search: the sources were the right domain but
         // missed the answer; retry retrieval once with the model's query.
         if (c.search?.trim() && intent === "docs" && !searchOverride && !emitted) {
           research = c.search.trim();
+          publishUiEvent(tenantId, { kind: "search", state: "run", label: `Retrying search: ${research.slice(0, 50)}` });
           return "stop";
         }
         if (typeof c.email_id === "number" && intent === "inbox") {
@@ -830,6 +914,7 @@ export async function streamVoiceReply(
       // The action already happened; regenerating the turn would replay it
       // (this exact path double-sent an email). Confirm truthfully instead.
       await emit("That went through, but I glitched while wrapping up. The action is done.");
+      flushSpeak(true);
       return;
     }
     await new Promise((r) => setTimeout(r, 600));
@@ -846,5 +931,7 @@ export async function streamVoiceReply(
   // the model's own query — it knows the conversation and what it needs.
   if (research && !emitted) {
     await streamVoiceReply(tenantId, question, onDelta, history, intent, research);
+    return;
   }
+  flushSpeak(true); // caption any trailing words that lacked end punctuation
 }

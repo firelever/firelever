@@ -4,7 +4,7 @@ import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
 
@@ -36,6 +36,11 @@ export function App() {
   const [redlines, setRedlines] = useState<RedlineResult | null>(null);
   const [redlinesBusy, setRedlinesBusy] = useState(false);
   const [focusEmail, setFocusEmail] = useState<UiEmail | null>(null);
+  // Live activity: the brain's real steps this conversation (routing decisions,
+  // searches, executing actions with truthful results) plus spoken captions.
+  const [activity, setActivity] = useState<UiEvent[]>([]);
+  const lastEvIdRef = useRef(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const uiSeqRef = useRef(0);
   const [mode, setMode] = useState<OrbMode>("muted");
   const [level, setLevel] = useState(0);
@@ -66,6 +71,7 @@ export function App() {
     // Conversation boundary: reset the context bus and local state so the
     // windows can only ever reflect THIS conversation.
     setFocusEmail(null);
+    setActivity([]);
     promote("answer");
     api.uiSessionStart().catch(() => {});
     try {
@@ -123,7 +129,10 @@ export function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date().toTimeString().slice(0, 8)), 1000);
+    const t = setInterval(() => {
+      setNow(new Date().toTimeString().slice(0, 8));
+      setNowMs(Date.now()); // ages the activity feed + expires the caption
+    }, 1000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
@@ -167,10 +176,18 @@ export function App() {
           if (!uiPrimedRef.current) {
             uiPrimedRef.current = true;
             uiSeqRef.current = ctx.seq ?? 0;
+            // Prime past the events too — history from before this page load
+            // must not replay as if it were happening now.
+            lastEvIdRef.current = Math.max(0, ...(ctx.events ?? []).map((e) => e.id));
             return;
           }
           if (!ctx.seq || ctx.seq === uiSeqRef.current) return;
           uiSeqRef.current = ctx.seq;
+          const fresh = (ctx.events ?? []).filter((e) => e.id > lastEvIdRef.current);
+          if (fresh.length) {
+            lastEvIdRef.current = fresh[fresh.length - 1].id;
+            setActivity((a) => [...a, ...fresh].slice(-24));
+          }
           if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
           if (ctx.theme && (THEME_ORDER as readonly string[]).includes(ctx.theme)) setTheme(ctx.theme as ThemeName);
           if (ctx.window) {
@@ -260,6 +277,20 @@ export function App() {
   }, [order]);
 
   const suggestions = ["What are our net payment terms?", "Who represents the seller?", "What's in my inbox?", "What needs a reply?", "Summarize the contract"];
+
+  // ---- live reasoning choreography ----
+  // The rail shows the brain's real steps; captions show the sentence being
+  // spoken; running searches/actions animate the focused card while they run.
+  const rail = activity.filter((e) => e.kind !== "speak").slice(-7);
+  const lastSpeak = [...activity].reverse().find((e) => e.kind === "speak");
+  const caption = lastSpeak && nowMs - lastSpeak.at < 8000 ? lastSpeak.label : null;
+  const scanning = activity.some(
+    (e) => e.kind === "search" && e.state === "run" && nowMs - e.at < 3000 && !activity.some((r) => r.id > e.id && (r.kind === "sources" || r.kind === "result"))
+  );
+  const lastAction = [...activity].reverse().find((e) => e.kind === "action" && e.state === "run");
+  const acting = !!lastAction && nowMs - lastAction.at < 6000 && !activity.some((r) => r.id > lastAction.id && r.kind === "result");
+  const evGlyph = (e: UiEvent) =>
+    e.kind === "route" ? "→" : e.kind === "search" ? "◎" : e.kind === "sources" ? "▤" : e.kind === "action" ? "⚡" : e.kind === "result" ? (e.state === "fail" ? "✕" : "✓") : "◈";
 
   // Live-data window bodies for the wired windows; static previews for the rest.
   function renderWindow(id: string): ReactNode {
@@ -459,9 +490,29 @@ export function App() {
 
         <div className="stage">
           <Orb theme={theme} mode={mode} level={level} idleLabel={voiceReady ? (speakReplies ? "READY" : "MUTED") : "READY"} />
+          {rail.length > 0 && (
+            <div className="activity">
+              <div className="act-head">LIVE REASONING</div>
+              {rail.map((e) => (
+                <div key={e.id} className={"act-line" + (e.state ? " " + e.state : "")} style={{ opacity: nowMs - e.at > 14000 ? 0.35 : 1 }}>
+                  <span className="ic">{evGlyph(e)}</span>
+                  <span>
+                    {e.label}
+                    {typeof e.n === "number" ? <span className="n"> · {e.n}</span> : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {caption && <div className="caption">{caption}</div>}
           <div className="window-stack" style={{ transformStyle: "preserve-3d" }}>
             {WINDOWS.map((w) => (
-              <div key={w.id} className={"card" + (order[0] === w.id ? " focused" : "")} style={rankStyle(w.id)} onClick={() => promote(w.id)}>
+              <div
+                key={w.id}
+                className={"card" + (order[0] === w.id ? " focused" + (scanning ? " scanning" : "") + (acting ? " acting" : "") : "")}
+                style={rankStyle(w.id)}
+                onClick={() => promote(w.id)}
+              >
                 <div className="card-head">
                   <span className="card-chip">{(() => { const I = Icon[w.icon]; return <I size={15} />; })()}</span>
                   <span className="card-label">{w.label}</span>

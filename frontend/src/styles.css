@@ -166,6 +166,56 @@ body {
 .dock-item .badge-n { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--warn); }
 .preview-tag { margin-left: auto; font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; color: var(--mut2); border: 1px solid rgba(var(--lineRGB), 0.16); padding: 1px 4px; border-radius: 4px; }
 
+/* ---- live reasoning rail ----
+   The brain's real steps stream in on the stage's left edge as they execute:
+   routing decisions, searches with result counts, actions with truthful
+   outcomes. Entries slide in as they happen and dim with age. */
+.activity {
+  position: absolute; left: 26px; top: 90px; width: 236px;
+  display: flex; flex-direction: column; gap: 7px;
+  z-index: 6; pointer-events: none;
+}
+.act-head { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; color: var(--mut2); margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
+.act-head::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--acc); animation: actPulse 1.6s ease-in-out infinite; }
+.act-line {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.45; color: var(--mut);
+  animation: actIn .38s cubic-bezier(.2, .85, .3, 1);
+  transition: opacity 1.2s;
+}
+.act-line .ic { width: 13px; flex: none; text-align: center; color: var(--mut2); }
+.act-line.run .ic { color: var(--acc); animation: actPulse 1.1s ease-in-out infinite; }
+.act-line.ok .ic { color: var(--okD); }
+.act-line.fail .ic { color: var(--warn); }
+.act-line .n { color: var(--accM); }
+@keyframes actIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@keyframes actPulse { 50% { opacity: 0.3; } }
+
+/* Spoken caption: the sentence Levi is saying right now, under the orb. */
+.caption {
+  position: absolute; left: 50%; transform: translateX(-50%); top: 168px;
+  max-width: 560px; padding: 6px 14px; border-radius: 12px;
+  font-size: 12.5px; color: var(--tx2); text-align: center;
+  background: rgba(var(--s2), 0.75); border: 1px solid rgba(var(--lineRGB), 0.1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  z-index: 7; animation: capIn .3s ease-out; pointer-events: none;
+}
+@keyframes capIn { from { opacity: 0; transform: translate(-50%, 5px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Focused-card choreography: a shimmer sweeps the card while a search runs;
+   the border glows while an action executes. */
+.card.scanning::after {
+  content: ""; position: absolute; inset: 0; border-radius: 20px; pointer-events: none;
+  background: linear-gradient(100deg, transparent 32%, rgba(var(--accRGB), 0.14) 50%, transparent 68%);
+  background-size: 220% 100%;
+  animation: scan 1.4s linear infinite;
+}
+@keyframes scan { from { background-position: 130% 0; } to { background-position: -130% 0; } }
+.card.acting {
+  border-color: rgba(var(--accRGB), 0.55);
+  box-shadow: 0 24px 60px rgba(0,0,0,var(--shA)), 0 0 26px rgba(var(--accRGB), 0.28), inset 0 1px 0 rgba(255,255,255,var(--hiA));
+}
+
 .spin { width: 14px; height: 14px; border: 2px solid rgba(var(--accRGB),0.25); border-top-color: var(--acc); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: rgba(var(--lineRGB), 0.12); border-radius: 4px; }
@@ -184,6 +234,9 @@ body {
   }
   .rail, .panel { display: none; }
   .clock, .themedots, .kbd { display: none; }
+  /* No room for the reasoning rail on a phone; the caption carries the sync. */
+  .activity { display: none; }
+  .caption { top: 150px; max-width: calc(100vw - 32px); font-size: 11.5px; }
   .center { flex: 1; min-height: 0; }
   .orb-assembly { top: 10px; }
   .card {

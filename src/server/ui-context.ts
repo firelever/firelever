@@ -17,15 +17,31 @@ export interface UiEmail {
   sent_at: string | null;
 }
 
+// A live activity event: one real step the brain took this turn (routed the
+// intent, searched, executed an action, spoke a sentence). The frontend renders
+// these as a streaming reasoning/action feed, so they must describe what
+// ACTUALLY happened — never intentions or claims.
+export interface UiEvent {
+  id: number;
+  at: number; // epoch ms
+  kind: "route" | "search" | "sources" | "action" | "result" | "note" | "speak";
+  state?: "run" | "ok" | "fail";
+  label: string;
+  n?: number; // count when meaningful (sources found, emails archived)
+}
+
 export interface UiContext {
   seq: number;
   window: string;
   email?: UiEmail | null;
   theme?: string | null;
+  events?: UiEvent[];
 }
 
 const contexts = new Map<string, UiContext>();
 let seq = 1;
+let evId = 1;
+const EVENTS_KEPT = 30;
 
 export function publishUiContext(
   tenantId: string,
@@ -40,12 +56,28 @@ export function publishUiContext(
     // email is tri-state: undefined = keep previous, null = clear, value = set
     email: email === undefined ? prev?.email ?? null : email,
     theme: theme ?? prev?.theme ?? null,
+    events: prev?.events ?? [],
   };
   contexts.set(tenantId, next);
   // Every context change is diagnosable from one log line.
   console.log(
     `[ctx] seq=${next.seq} window=${next.window} email=${next.email ? `"${next.email.subject.slice(0, 40)}"` : "null"}${next.theme ? ` theme=${next.theme}` : ""}`
   );
+}
+
+// Append an activity event and bump seq so pollers pick it up on the next
+// tick. Window, email, and theme are untouched — events are a parallel stream.
+export function publishUiEvent(tenantId: string, ev: Omit<UiEvent, "id" | "at">): void {
+  const prev = contexts.get(tenantId);
+  const events = [...(prev?.events ?? []), { ...ev, id: evId++, at: Date.now() }].slice(-EVENTS_KEPT);
+  contexts.set(tenantId, {
+    seq: seq++,
+    window: prev?.window ?? "answer",
+    email: prev?.email ?? null,
+    theme: prev?.theme ?? null,
+    events,
+  });
+  if (ev.kind !== "speak") console.log(`[ev] ${ev.kind}${ev.state ? ":" + ev.state : ""} ${ev.label.slice(0, 80)}`);
 }
 
 export function getUiContext(tenantId: string): UiContext | null {
@@ -72,7 +104,7 @@ export function getLastIntent(tenantId: string): string | null {
 // appear on screen. Theme persists (it's a preference, not context).
 export function resetUiContext(tenantId: string): void {
   const prev = contexts.get(tenantId);
-  contexts.set(tenantId, { seq: seq++, window: "answer", email: null, theme: prev?.theme ?? null });
+  contexts.set(tenantId, { seq: seq++, window: "answer", email: null, theme: prev?.theme ?? null, events: [] });
   lastIntents.delete(tenantId);
   console.log(`[ctx] reset (session start) tenant=${tenantId}`);
 }
