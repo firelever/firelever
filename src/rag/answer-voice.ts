@@ -92,7 +92,9 @@ const CTX =
   " SCREEN CONTEXT: A window on screen follows this conversation, and YOU control what it shows. If the data you " +
   "were given is the WRONG DOMAIN for the user's request (they asked about email but you got document sources, " +
   'asked about documents but got the inbox, and so on), output ONLY <<ctx:{"reroute":"inbox"}>> (or "docs" or ' +
-  '"workspace") and nothing else — the system redoes the turn with the right data. If the user is asking about ' +
+  '"workspace") and nothing else — the system redoes the turn with the right data. Contract people and terms ' +
+  "(sellers, buyers, listing agents, brokers, prices, deposits, closings) live in the DOCUMENTS: if you were " +
+  'given the inbox for one of those, reroute to "docs" instead of saying the inbox lacks it. If the user is asking about ' +
   "their documents but the provided sources do not contain the answer, do NOT give up: output ONLY " +
   '<<ctx:{"search":"a better search query naming the document and the thing sought"}>> and nothing else — the ' +
   "system searches again and redoes the turn (one retry; if the retried sources still lack it, say so plainly). " +
@@ -316,7 +318,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
 type Intent = "chat" | "inbox" | "docs" | "workspace";
 const WORKSPACE_RE = /\b(schedules?|calendars?|appointments?|meetings?|events?|tasks?|to-?dos?|notes?|reminders?)\b/;
 const INBOX_RE = /\b(inbox|e-?mails?|reply|replies|senders?|unread|mailbox|triage|newsletters?|spam|messages?|inquir(y|ies)|correspondence)\b/;
-const DOCS_RE = /\b(documents?|contracts?|clauses?|agreements?|pdf|files?|polic(y|ies)|sellers?|buyers?|closing|deposit|price|propert(y|ies)|street|inspection|addend(um|a)|warranty)\b/;
+const DOCS_RE = /\b(documents?|contracts?|clauses?|agreements?|pdf|files?|polic(y|ies)|sellers?|buyers?|closing|deposit|price|propert(y|ies)|street|inspection|addend(um|a)|warranty|listing|agents?|brokers?|realtors?|escrow|commission)\b/;
 
 // Mask "not/no/don't <phrase>" so negated domains don't count as signals.
 function maskNegations(s: string): string {
@@ -408,6 +410,10 @@ function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): 
   const own = strongSignal(s);
   if (own) return own;
   // Layer 2: the tenant's own entities. Score each domain by distinct hits.
+  // Only a STRONG entity match (2+ distinct hits) may switch domains on its
+  // own — emails mention everything, so a single word like "agents" appearing
+  // in one email body must not yank an active documents conversation into
+  // the inbox. Weak hits only decide when there is no active conversation.
   const lex = lexiconFor(tenantId);
   const qTokens = tokens(s);
   const score = (set: Set<string>) => qTokens.filter((t) => set.has(t)).length;
@@ -417,11 +423,13 @@ function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): 
     ["workspace", score(lex.ws)],
   ];
   scores.sort((a, b) => b[1] - a[1]);
-  if (scores[0][1] > 0 && scores[0][1] > scores[1][1]) return scores[0][0];
-  // Layer 3: what did we actually route last turn? (Server-side memory, with
-  // a history re-scan only as the cold-restart fallback.)
+  if (scores[0][1] >= 2 && scores[0][1] > scores[1][1]) return scores[0][0];
+  // Layer 3: conversational continuity — what did we actually route last
+  // turn? Outranks weak single-word lexicon hits.
   const last = getLastIntent(tenantId);
   if (last === "inbox" || last === "docs" || last === "workspace") return last;
+  // No active conversation: a weak lexicon hit is better than defaulting.
+  if (scores[0][1] > 0 && scores[0][1] > scores[1][1]) return scores[0][0];
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role !== "user") continue; // never route on assistant prose
     const inherited = strongSignal(maskNegations(history[i].text.toLowerCase()));
