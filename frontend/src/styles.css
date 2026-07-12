@@ -201,6 +201,10 @@ body {
   z-index: 7; animation: capIn .3s ease-out; pointer-events: none;
 }
 @keyframes capIn { from { opacity: 0; transform: translate(-50%, 5px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.caption.reconnect {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--warn); border-color: rgba(var(--accRGB), 0.3);
+}
 
 /* Focused-card choreography: a shimmer sweeps the card while a search runs;
    the border glows while an action executes. */

@@ -23,14 +23,16 @@ export interface LiveConvo {
 
 // Opens the mic, connects to the agent, and wires callbacks. Resolves once the
 // session object exists (connection continues via the callbacks).
-export async function startLive(h: LiveHandlers): Promise<LiveConvo> {
+export async function startLive(h: LiveHandlers, firstMessage?: string): Promise<LiveConvo> {
   const { token, greeting } = await api.convaiToken();
+  // Server-built greeting: fresh every session (name, time of day, one true
+  // hook from live state) instead of the agent's canned first message. A
+  // reconnect passes its own line ("sorry, I dropped for a second") instead.
+  const opening = firstMessage ?? greeting;
   const convo = await Conversation.startSession({
     conversationToken: token,
     connectionType: "webrtc",
-    // Server-built greeting: fresh every session (name, time of day, one true
-    // hook from live state) instead of the agent's canned first message.
-    ...(greeting ? { overrides: { agent: { firstMessage: greeting } } } : {}),
+    ...(opening ? { overrides: { agent: { firstMessage: opening } } } : {}),
     onConnect: () => h.onStatus("connected"),
     onDisconnect: () => h.onStatus("disconnected"),
     onError: (msg) => h.onError(msg),

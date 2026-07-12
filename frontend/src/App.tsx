@@ -63,8 +63,113 @@ export function App() {
   // owns the voice loop (streaming STT, echo cancellation, turn-taking,
   // barge-in, TTS); our server is the agent's Custom LLM, so every reply is
   // grounded in your documents.
+  // A deliberate mic-off ends the session; an UNEXPECTED drop (the single-
+  // machine server restarts on every deploy) flips into a reconnect loop that
+  // polls health and reopens the session, so Levi comes back on his own.
+  const endingRef = useRef(false);
+  const reconnectSeq = useRef(0);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const liveHandlers = () => ({
+    onStatus: (s: string) => {
+      if (s === "connected") {
+        setMode("hearing");
+        setReconnecting(false);
+      }
+      if (s === "disconnected") {
+        cancelAnimationFrame(liveRaf.current);
+        convoRef.current = null;
+        setLevel(0);
+        if (endingRef.current) {
+          setLiveOn(false);
+          setMode("muted");
+          return;
+        }
+        beginReconnect();
+      }
+    },
+    onMode: (m: string) => setMode(m === "speaking" ? "responding" : "hearing"),
+    onMessage: (role: string, text: string) => {
+      const t = text.trim();
+      if (!t) return;
+      const r = role === "user" ? "user" : "bot";
+      const prevRole = lastRoleRef.current;
+      lastRoleRef.current = r;
+      // The SDK can report a message twice; skip an immediate duplicate.
+      setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
+      // Window surfacing is driven by the server's ui-context (the brain's
+      // actual intent), never by keyword-scanning transcript prose — Levi
+      // saying "worth a note" must not yank the Notes window forward.
+      if (r === "user") setLastQuestion(t);
+      else {
+        // Only surface a real answer (an agent reply to a question) in the
+        // card, not the opening greeting or a reconnect greeting.
+        if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
+        // Levi may have executed an action (sent a reply, added a task) —
+        // refresh the windows so they show the new state.
+        loadTriage();
+        loadWorkspace();
+      }
+    },
+    onError: (msg: string) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
+  });
+
+  async function openSession(firstMessage?: string) {
+    const convo = await startLive(liveHandlers(), firstMessage);
+    convoRef.current = convo;
+    // Drive the orb from live mic / agent volume.
+    const tick = () => {
+      const c = convoRef.current;
+      if (!c) return;
+      setLevel(Math.min(1, Math.max(c.getInputVolume(), c.getOutputVolume()) * 1.7));
+      liveRaf.current = requestAnimationFrame(tick);
+    };
+    liveRaf.current = requestAnimationFrame(tick);
+  }
+
+  function beginReconnect() {
+    const token = ++reconnectSeq.current;
+    setReconnecting(true);
+    setMode("thinking");
+    void (async () => {
+      // ~2 minutes of patience: deploys take 30-90s. Poll health first so we
+      // only attempt a session once the brain is actually back.
+      for (let i = 0; i < 15 && reconnectSeq.current === token; i++) {
+        await new Promise((r) => setTimeout(r, Math.min(2500 + i * 1500, 10_000)));
+        if (reconnectSeq.current !== token) return;
+        try {
+          const ok = await fetch("/api/health").then((r) => r.ok).catch(() => false);
+          if (!ok) continue;
+          const line = ["Sorry, I dropped for a second there. Where were we?", "Back. I lost the line for a moment. What were we doing?", "I'm back. Sorry about the hiccup."];
+          await openSession(line[Math.floor(Math.random() * line.length)]);
+          return; // onConnect clears the reconnecting state
+        } catch {
+          /* server up but session failed — try again */
+        }
+      }
+      if (reconnectSeq.current !== token) return;
+      setReconnecting(false);
+      setLiveOn(false);
+      setMode("muted");
+      setMessages((m) => [...m, { role: "bot", text: "I couldn't reconnect to Levi. Tap the mic to start again." }]);
+    })();
+  }
+
   async function toggleLive() {
-    if (liveOn) { await convoRef.current?.endSession().catch(() => {}); return; }
+    if (liveOn) {
+      endingRef.current = true;
+      reconnectSeq.current++; // cancels any reconnect loop in flight
+      setReconnecting(false);
+      const hadSession = Boolean(convoRef.current);
+      await convoRef.current?.endSession().catch(() => {});
+      // Mid-reconnect there is no session to end; settle the state directly.
+      if (!hadSession) {
+        setLiveOn(false);
+        setMode("muted");
+      }
+      return;
+    }
+    endingRef.current = false;
     setLiveOn(true);
     lastRoleRef.current = "";
     setMode("thinking");
@@ -75,51 +180,7 @@ export function App() {
     promote("answer");
     api.uiSessionStart().catch(() => {});
     try {
-      const convo = await startLive({
-        onStatus: (s) => {
-          if (s === "connected") setMode("hearing");
-          if (s === "disconnected") {
-            cancelAnimationFrame(liveRaf.current);
-            convoRef.current = null;
-            setLiveOn(false);
-            setLevel(0);
-            setMode("muted");
-          }
-        },
-        onMode: (m) => setMode(m === "speaking" ? "responding" : "hearing"),
-        onMessage: (role, text) => {
-          const t = text.trim();
-          if (!t) return;
-          const r = role === "user" ? "user" : "bot";
-          const prevRole = lastRoleRef.current;
-          lastRoleRef.current = r;
-          // The SDK can report a message twice; skip an immediate duplicate.
-          setMessages((m) => (m.length && m[m.length - 1].role === r && m[m.length - 1].text === t ? m : [...m, { role: r, text: t }]));
-          // Window surfacing is driven by the server's ui-context (the brain's
-          // actual intent), never by keyword-scanning transcript prose — Levi
-          // saying "worth a note" must not yank the Notes window forward.
-          if (r === "user") setLastQuestion(t);
-          else {
-            // Only surface a real answer (an agent reply to a question) in the
-            // card, not the opening greeting or a reconnect greeting.
-            if (prevRole === "user") setLiveAnswer({ answerable: true, answer: t, citations: [] });
-            // Levi may have executed an action (sent a reply, added a task) —
-            // refresh the windows so they show the new state.
-            loadTriage();
-            loadWorkspace();
-          }
-        },
-        onError: (msg) => setMessages((m) => [...m, { role: "bot", text: "Voice: " + msg }]),
-      });
-      convoRef.current = convo;
-      // Drive the orb from live mic / agent volume.
-      const tick = () => {
-        const c = convoRef.current;
-        if (!c) return;
-        setLevel(Math.min(1, Math.max(c.getInputVolume(), c.getOutputVolume()) * 1.7));
-        liveRaf.current = requestAnimationFrame(tick);
-      };
-      liveRaf.current = requestAnimationFrame(tick);
+      await openSession();
     } catch (e) {
       setLiveOn(false);
       setMode("muted");
@@ -504,7 +565,13 @@ export function App() {
               ))}
             </div>
           )}
-          {caption && <div className="caption">{caption}</div>}
+          {reconnecting ? (
+            <div className="caption reconnect">
+              <span className="spin" style={{ width: 11, height: 11 }} /> Levi is updating, reconnecting…
+            </div>
+          ) : (
+            caption && <div className="caption">{caption}</div>
+          )}
           <div className="window-stack" style={{ transformStyle: "preserve-3d" }}>
             {WINDOWS.map((w) => (
               <div
