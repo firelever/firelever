@@ -455,6 +455,7 @@ const chatCompletions = async (c: any) => {
       } catch {
         text = "Sorry, I hit a problem pulling that up. Try again.";
       }
+      if (!text.trim()) text = "Sorry, I lost my train of thought there. Could you ask me that again?";
     }
     return c.json({
       id,
@@ -476,12 +477,27 @@ const chatCompletions = async (c: any) => {
       JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finish }] }) +
       "\n\n";
     await s.write(frame({ role: "assistant" }));
+    // A voice turn must NEVER end silent — ElevenLabs treats an empty reply as
+    // "Brain returned no response" and fails the whole conversation.
+    let spoke = false;
     try {
-      if (!question) await s.write(frame({ content: greeting }));
-      else await streamVoiceReply(tenantId, question, async (t) => { await s.write(frame({ content: t })); }, history);
+      if (!question) {
+        await s.write(frame({ content: greeting }));
+        spoke = true;
+      } else {
+        await streamVoiceReply(tenantId, question, async (t) => {
+          if (t) spoke = true;
+          await s.write(frame({ content: t }));
+        }, history);
+      }
     } catch (e) {
       console.error("[convai] stream failed:", e instanceof Error ? e.message : e);
       await s.write(frame({ content: "Sorry, I hit a problem pulling that up. Try again." }));
+      spoke = true;
+    }
+    if (!spoke) {
+      console.warn("[convai] empty turn for question:", question.slice(0, 80));
+      await s.write(frame({ content: "Sorry, I lost my train of thought there. Could you ask me that again?" }));
     }
     await s.write(frame({}, "stop"));
     await s.write("data: [DONE]\n\n");

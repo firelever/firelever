@@ -586,7 +586,10 @@ export async function streamVoiceReply(
       // ctx: routing correction / entity focus. Malformed ctx is ignored.
       try {
         const c = JSON.parse(raw) as { reroute?: string; email_id?: number; window?: string };
-        if (c.reroute && !forced && !emitted && ["inbox", "docs", "workspace"].includes(c.reroute)) {
+        // Rerouting to the domain we're already in is meaningless — ignore it
+        // (a stop here produced silent turns: reroute → re-run → ignored tag →
+        // empty reply → "Brain returned no response").
+        if (c.reroute && c.reroute !== intent && !forced && !emitted && ["inbox", "docs", "workspace"].includes(c.reroute)) {
           reroute = c.reroute as Intent;
           return "stop";
         }
