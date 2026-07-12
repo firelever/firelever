@@ -22,6 +22,7 @@ import { sendReply, replySendingConfigured } from "../triage/send.js";
 import { getUiContext, resetUiContext } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { calendarConfigured, listEvents } from "../calendar/google.js";
+import { buildGreeting } from "./greeting.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
@@ -402,7 +403,10 @@ app.get("/api/convai/token", async (c) => {
   });
   if (!r.ok) return c.json({ error: `token fetch failed (${r.status})` }, 502);
   const data = (await r.json()) as { token?: string };
-  return c.json({ token: data.token, agentId });
+  // A fresh greeting rides along with every token, so each session opens
+  // differently: name, time of day, and one true hook from live state.
+  const greeting = await buildGreeting(c.get("tenant").id).catch(() => null);
+  return c.json({ token: data.token, agentId, greeting });
 });
 
 // ---------- OpenAI-compatible endpoint for ElevenLabs Conversational AI ----------

@@ -47,7 +47,7 @@ export const api = {
   uiContext: () => req<UiCtx>("/ui/context"),
   uiSessionStart: () => req<{ ok: boolean }>("/ui/session-start", { method: "POST", body: "{}" }),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
-  convaiToken: () => req<{ token: string; agentId: string }>("/convai/token"),
+  convaiToken: () => req<{ token: string; agentId: string; greeting?: string | null }>("/convai/token"),
   voice: async (blob: Blob): Promise<VoiceResult> => {
     const res = await fetch("/api/voice", {
       method: "POST",
