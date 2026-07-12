@@ -151,12 +151,20 @@ export function App() {
 
   // Follow the voice conversation in real time: the brain publishes which
   // window (and which email) it's discussing; surface it as it speaks.
+  // The first poll only PRIMES the sequence number — leftover context from an
+  // earlier session must never be applied to a fresh page.
+  const uiPrimedRef = useRef(false);
   useEffect(() => {
     if (!authed) return;
     const t = setInterval(() => {
       api
         .uiContext()
         .then((ctx) => {
+          if (!uiPrimedRef.current) {
+            uiPrimedRef.current = true;
+            uiSeqRef.current = ctx.seq ?? 0;
+            return;
+          }
           if (!ctx.seq || ctx.seq === uiSeqRef.current) return;
           uiSeqRef.current = ctx.seq;
           if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
@@ -168,7 +176,7 @@ export function App() {
           }
         })
         .catch(() => {});
-    }, 1200);
+    }, 800);
     return () => clearInterval(t);
   }, [authed]);
 

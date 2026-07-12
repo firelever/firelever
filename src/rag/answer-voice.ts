@@ -285,7 +285,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "show_window") {
       if (!WINDOWS.includes(a.window)) return "I don't have a window by that name.";
-      publishUiContext(tenantId, a.window);
+      publishUiContext(tenantId, a.window, a.window === "inbox" ? undefined : null);
       return null;
     }
     if (a.type === "set_theme") {
@@ -477,7 +477,7 @@ export async function streamVoiceReply(
     const lastUserText = [...history].reverse().find((h) => h.role === "user")?.text.toLowerCase() ?? "";
     const pick = (s: string) =>
       /\b(tasks?|to-?dos?|check(ed)? off|reminders?)\b/.test(s) ? "tasks" : /\bnotes?\b/.test(s) ? "notes" : /\b(schedules?|calendars?|appointments?|meetings?|events?)\b/.test(s) ? "schedule" : null;
-    publishUiContext(tenantId, pick(wsText) ?? pick(lastUserText) ?? "schedule");
+    publishUiContext(tenantId, pick(wsText) ?? pick(lastUserText) ?? "schedule", null);
     system =
       "You are Levi, answering out loud about the user's schedule, tasks, and notes using ONLY the workspace data provided. " +
       "Be concrete about times and what's open versus done. If the data is empty for what they asked, say so plainly " +
@@ -607,7 +607,7 @@ export async function streamVoiceReply(
       ? `${convoBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
-    publishUiContext(tenantId, "answer");
+    publishUiContext(tenantId, "answer", null); // docs turn: no email belongs on screen
     // For terse follow-ups, enrich the retrieval query with the previous user
     // turn so hybrid search has something to bite on.
     const prevUser = [...history].reverse().find((h) => h.role === "user")?.text ?? "";
