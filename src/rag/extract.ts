@@ -37,8 +37,19 @@ export async function extractText(filePath: string): Promise<Extracted> {
     // — real contracts are mixed (e-signed text pages + scanned image pages), so
     // a document-level average would skip the scans that carry the actual terms.
     const PAGE_TEXT_MIN = 40;
+    // A text layer can be present but corrupt: some e-sign PDFs ship broken
+    // font maps that drop whole glyphs (observed live: every lowercase "n"
+    // extracted as a newline, so "Contract" was indexed as "Co<nl>tract").
+    // English prose is ~6-7% "n"; near-zero across a full page means the
+    // layer is unusable — treat the page like a scan and OCR it.
+    const corruptTextLayer = (t: string): boolean => {
+      const letters = (t.match(/[a-z]/g) ?? []).length;
+      if (letters < 200) return false;
+      const ns = (t.match(/n/g) ?? []).length;
+      return ns / letters < 0.01;
+    };
     const scanned = perPage
-      .map((t, i) => (t.trim().length < PAGE_TEXT_MIN ? i : -1))
+      .map((t, i) => (t.trim().length < PAGE_TEXT_MIN || corruptTextLayer(t) ? i : -1))
       .filter((i) => i >= 0);
 
     // Pages transcribed from scans get a legibility marker so answers can hedge
