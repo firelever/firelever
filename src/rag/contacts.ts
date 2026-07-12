@@ -57,7 +57,9 @@ export function contactsBlock(tenantId: string): string {
     " CONTACTS — addresses the user has confirmed before: " +
     cs.map((c) => `${c.name}: ${c.email}`).join("; ") +
     ". When the user names one of these people for an email, forward, or invite, USE this address (confirm it out " +
-    "loud, don't ask for it again). If they dictate a DIFFERENT address for the same person, do not silently accept " +
+    "loud, don't ask for it again). These addresses were explicitly confirmed by the user and OVERRIDE any address " +
+    "seen on inbox emails — from-addresses are often shared inboxes or aliases, not the person's real address. " +
+    "If the user dictates a DIFFERENT address for the same person, do not silently accept " +
     "either one: point out the difference and ask which is right."
   );
 }
