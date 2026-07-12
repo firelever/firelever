@@ -19,7 +19,7 @@ import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
-import { getUiContext } from "./ui-context.js";
+import { getUiContext, resetUiContext } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
@@ -325,6 +325,13 @@ app.post("/api/voice", limited("ask"), async (c) => {
 // frontend polls this and follows along, surfacing the matching window live.
 app.get("/api/ui/context", (c) => {
   return c.json(getUiContext(c.get("tenant").id) ?? { seq: 0, window: null, email: null });
+});
+
+// Conversation boundary: the client calls this when a voice session starts so
+// the window can only ever reflect the present conversation.
+app.post("/api/ui/session-start", (c) => {
+  resetUiContext(c.get("tenant").id);
+  return c.json({ ok: true });
 });
 
 // ---------- Free-STT voice: browser does speech-to-text, we ground + speak ----------

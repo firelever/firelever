@@ -563,14 +563,18 @@ export async function streamVoiceReply(
     const qNow = wordsOf(question);
     const qPast = wordsOf(history.slice(-4).map((h) => h.text).join(" "));
     const qWords = [...new Set([...qNow, ...qPast])];
+    // Whole-word matching only: substring matching with short tokens produced
+    // false positives ("ute" inside "execute" focused unrelated emails).
+    const wordHit = (hay: string, w: string) =>
+      new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(hay);
     const scored = rows
       .map((r) => {
         // Names usually live in the body's opening lines ("Hi, I'm Dana..."),
         // not the sender address or subject — match against all three.
         const hay = (r.from_addr + " " + r.subject + " " + r.body.slice(0, 250)).toLowerCase();
         let score = 0;
-        for (const w of new Set(qNow)) if (hay.includes(w)) score += 2;
-        for (const w of new Set(qPast)) if (hay.includes(w)) score += 1;
+        for (const w of new Set(qNow)) if (wordHit(hay, w)) score += 2;
+        for (const w of new Set(qPast)) if (wordHit(hay, w)) score += 1;
         return { r, score };
       })
       .filter((x) => x.score > 0)
@@ -732,7 +736,9 @@ export async function streamVoiceReply(
           research = c.search.trim();
           return "stop";
         }
-        if (typeof c.email_id === "number") {
+        if (typeof c.email_id === "number" && intent === "inbox") {
+          // Email pinning is inbox-turn-only: a docs or workspace turn must
+          // never put an email on screen.
           const row = db
             .prepare(
               `SELECT id, from_addr, subject, body, received_at, draft_reply, status, sent_at FROM inbound_emails

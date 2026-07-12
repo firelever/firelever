@@ -63,7 +63,11 @@ export function App() {
     setLiveOn(true);
     lastRoleRef.current = "";
     setMode("thinking");
+    // Conversation boundary: reset the context bus and local state so the
+    // windows can only ever reflect THIS conversation.
+    setFocusEmail(null);
     promote("answer");
+    api.uiSessionStart().catch(() => {});
     try {
       const convo = await startLive({
         onStatus: (s) => {

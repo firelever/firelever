@@ -45,6 +45,7 @@ export const api = {
   voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
   voiceText: (text: string) => req<{ answer: string; audio: string | null }>("/voice/text", { method: "POST", body: JSON.stringify({ text }) }),
   uiContext: () => req<UiCtx>("/ui/context"),
+  uiSessionStart: () => req<{ ok: boolean }>("/ui/session-start", { method: "POST", body: "{}" }),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
   convaiToken: () => req<{ token: string; agentId: string }>("/convai/token"),
   voice: async (blob: Blob): Promise<VoiceResult> => {

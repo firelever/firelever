@@ -34,13 +34,18 @@ export function publishUiContext(
   theme?: string | null
 ): void {
   const prev = contexts.get(tenantId);
-  contexts.set(tenantId, {
+  const next: UiContext = {
     seq: seq++,
     window: window ?? prev?.window ?? "answer",
     // email is tri-state: undefined = keep previous, null = clear, value = set
     email: email === undefined ? prev?.email ?? null : email,
     theme: theme ?? prev?.theme ?? null,
-  });
+  };
+  contexts.set(tenantId, next);
+  // Every context change is diagnosable from one log line.
+  console.log(
+    `[ctx] seq=${next.seq} window=${next.window} email=${next.email ? `"${next.email.subject.slice(0, 40)}"` : "null"}${next.theme ? ` theme=${next.theme}` : ""}`
+  );
 }
 
 export function getUiContext(tenantId: string): UiContext | null {
@@ -59,4 +64,15 @@ export function getLastIntent(tenantId: string): string | null {
   const e = lastIntents.get(tenantId);
   if (!e || Date.now() - e.at > INTENT_TTL_MS) return null;
   return e.intent;
+}
+
+// Conversation boundary: the window may only ever reflect the PRESENT
+// conversation. Called when a voice session starts — wipes the window,
+// entity, and routed-intent memory so nothing from an earlier session can
+// appear on screen. Theme persists (it's a preference, not context).
+export function resetUiContext(tenantId: string): void {
+  const prev = contexts.get(tenantId);
+  contexts.set(tenantId, { seq: seq++, window: "answer", email: null, theme: prev?.theme ?? null });
+  lastIntents.delete(tenantId);
+  console.log(`[ctx] reset (session start) tenant=${tenantId}`);
 }
