@@ -367,7 +367,9 @@ app.post("/api/ui/session-start", (c) => {
 // ElevenLabs raw TTS — a separate, larger free quota than Conversational AI.
 app.post("/api/voice/text", limited("ask"), async (c) => {
   const tenant = c.get("tenant");
-  const { text } = await c.req.json<{ text?: string }>();
+  // speak:false skips TTS — diagnostics and text-mode checks were burning
+  // ElevenLabs credits synthesizing audio nobody played.
+  const { text, speak } = await c.req.json<{ text?: string; speak?: boolean }>();
   const q = (text ?? "").trim();
   if (!q) return c.json({ answer: "", audio: null });
   let answer = "";
@@ -380,6 +382,7 @@ app.post("/api/voice/text", limited("ask"), async (c) => {
   }
   answer = answer.trim();
   let audio: string | null = null;
+  if (speak === false) return c.json({ answer, audio: null });
   try {
     audio = (await synthesize(answer)).toString("base64");
   } catch (e) {
