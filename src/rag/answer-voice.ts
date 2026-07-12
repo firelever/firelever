@@ -76,11 +76,12 @@ const ACTIONS =
 // the question and the data it was handed, so it is the last line of defense
 // against misroutes — and it can pin the exact entity on screen.
 const CTX =
-  " SCREEN CONTEXT: A window on screen follows this conversation. If the data you were given is the WRONG DOMAIN " +
-  "for the user's request (they asked about email but you got document sources, asked about documents but got the " +
-  'inbox, and so on), output ONLY <<ctx:{"reroute":"inbox"}>> (or "docs" or "workspace") and nothing else — the ' +
-  "system redoes the turn with the right data. When your answer is mainly about ONE specific email from the " +
-  'full-content list, start with <<ctx:{"email_id":ID}>> so it appears on screen.';
+  " SCREEN CONTEXT: A window on screen follows this conversation, and YOU control what it shows. If the data you " +
+  "were given is the WRONG DOMAIN for the user's request (they asked about email but you got document sources, " +
+  'asked about documents but got the inbox, and so on), output ONLY <<ctx:{"reroute":"inbox"}>> (or "docs" or ' +
+  '"workspace") and nothing else — the system redoes the turn with the right data. Whenever your answer discusses ' +
+  'one specific email from the list, you MUST start your reply with <<ctx:{"email_id":ID}>> so the screen shows ' +
+  "THAT email — every time, follow-ups included; the screen may otherwise be showing a stale email from earlier.";
 
 // Email bodies get shown in the UI and read aloud; angle-bracketed and long
 // tracking URLs (newsletter plumbing) are pure noise in both registers.
@@ -446,7 +447,9 @@ export async function streamVoiceReply(
     const qWords = [...new Set([...qNow, ...qPast])];
     const scored = rows
       .map((r) => {
-        const hay = (r.from_addr + " " + r.subject).toLowerCase();
+        // Names usually live in the body's opening lines ("Hi, I'm Dana..."),
+        // not the sender address or subject — match against all three.
+        const hay = (r.from_addr + " " + r.subject + " " + r.body.slice(0, 250)).toLowerCase();
         let score = 0;
         for (const w of new Set(qNow)) if (hay.includes(w)) score += 2;
         for (const w of new Set(qPast)) if (hay.includes(w)) score += 1;
