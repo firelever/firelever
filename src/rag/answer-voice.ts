@@ -105,6 +105,19 @@ const cleanBody = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Outbound sends must be idempotent: the voice pipeline delivers turns
+// at-least-once (duplicate requests observed 1s apart), and a re-generated
+// turn re-tags its action — without this guard that meant duplicate emails.
+// Same send target within the window → refuse, truthfully.
+const recentSends = new Map<string, number>();
+function duplicateSend(key: string, ttlMs = 120_000): boolean {
+  const now = Date.now();
+  for (const [k, t] of recentSends) if (now - t > ttlMs) recentSends.delete(k);
+  if (recentSends.has(key)) return true;
+  recentSends.set(key, now);
+  return false;
+}
+
 // Returns a spoken failure sentence, or null when the action succeeded.
 async function executeAction(tenantId: string, a: Action): Promise<string | null> {
   try {
@@ -126,6 +139,8 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       const body = dictated || (row.draft_reply ?? "").trim();
       if (!body) return "There's no draft on that email yet. Tell me what to say, or ask me to draft one.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
+      if (duplicateSend(`${tenantId}:reply:${row.id}`))
+        return "I just sent a reply on that thread moments ago, so I held this one to avoid a duplicate. If you really want another, give it a minute and ask again.";
       await sendReply({ from_addr: row.from_addr, subject: row.subject, draft_reply: body, message_id: row.message_id });
       const sentAt = new Date().toISOString();
       updateEmail(row.id, { status: "approved", sent_at: sentAt, draft_reply: body });
@@ -138,6 +153,8 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       const body = (a.body ?? "").trim();
       if (!body) return "I didn't catch what the email should say, so nothing was sent.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
+      if (duplicateSend(`${tenantId}:compose:${to}`))
+        return "I just sent an email to that address moments ago, so I held this one to avoid a duplicate. If you really want another, give it a minute and ask again.";
       await sendEmail({ to, subject: (a.subject ?? "").trim() || "(no subject)", text: body });
       return null;
     }
@@ -208,6 +225,8 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         .get(a.email_id, tenantId) as { id: number; from_addr: string; subject: string; body: string; received_at: string | null } | undefined;
       if (!row) return "I couldn't find that email, so nothing was forwarded.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was forwarded.";
+      if (duplicateSend(`${tenantId}:forward:${row.id}:${to}`))
+        return "I just forwarded that email there moments ago, so I held this one to avoid a duplicate.";
       const note = (a.note ?? "").trim();
       await sendEmail({
         to,
@@ -629,6 +648,7 @@ export async function streamVoiceReply(
   // out and executed BEFORE any speech is released; a ctx reroute aborts the
   // turn so it can re-run against the right data.
   let reroute: Intent | null = null;
+  let acted = false; // an action executed — this turn must never be regenerated
 
   const runOnce = async (): Promise<void> => {
     const stream = client.messages.stream({
@@ -647,6 +667,7 @@ export async function streamVoiceReply(
     // Returns "stop" when the turn must end (action failure spoken, or reroute).
     const handleTag = async (kind: string, raw: string): Promise<"stop" | "go"> => {
       if (kind === "action") {
+        acted = true; // side effects may occur from here — no turn regeneration
         let failure: string | null = "I couldn't make sense of that request, so nothing happened.";
         try {
           failure = await executeAction(tenantId, JSON.parse(raw) as Action);
@@ -757,6 +778,12 @@ export async function streamVoiceReply(
     await runOnce();
   } catch (e) {
     if (emitted) throw e; // partial speech already out — don't double-speak
+    if (acted) {
+      // The action already happened; regenerating the turn would replay it
+      // (this exact path double-sent an email). Confirm truthfully instead.
+      await emit("That went through, but I glitched while wrapping up. The action is done.");
+      return;
+    }
     await new Promise((r) => setTimeout(r, 600));
     await runOnce(); // one transparent retry for transient API failures
   }
