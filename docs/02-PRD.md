@@ -114,7 +114,41 @@ states → L3 voice pipeline (STT/Claude/TTS) → L4 wire Answer + Inbox to real
 → L5 Tasks/Schedule/Notes + Contract/Sheet → L6 preview stubs + approve/undo polish.
 Each slice is independently demoable.
 
-## 7. Gate decision
+## 8. Levi agency — actions, memory, email parity (amendment, 2026-07-11)
+
+Levi is an agent, not a narrator (ADR-014). Requirements added after live testing:
+
+**Action protocol (M):** Levi performs a bounded set of actions via structured
+tags the server executes *before* the confirmation is spoken (act-then-confirm).
+Claiming an action without executing it is a defect class ("capability
+hallucination") and is prohibited by prompt contract; anything outside the
+action set must be declined out loud.
+
+**Email parity (M):** the user must be able to do by voice anything they can do
+in their mail client for the flows Levi owns:
+- Reply on any thread, any number of times, with dictated content — including
+  after a previous reply was sent.
+- Compose a brand-new email to any address. The recipient address and message
+  gist must be explicit in the conversation; Levi asks rather than guesses.
+- Draft-for-review: generate a grounded draft into the Replies window without
+  sending (guidance-directed), preserving the human-approval path.
+- Ground truth for outbound state is `sent_at`, set only after SMTP succeeds;
+  Levi may never claim an email was sent unless it is recorded as sent.
+- Deferred (documented, not yet wired): forwarding, attachments on outbound
+  mail, and an outbound-mail log table for composed (non-reply) sends.
+
+**Persistent memory (M):** user corrections and confirmed facts persist per
+tenant and override OCR'd document text in every answer path. Corrections that
+contradict clear, consistent source evidence get exactly one evidence-citing
+pushback and are stored with both sides if the user insists (calibrated
+deference).
+
+**Contextual UI (M):** windows follow the conversation via server-published UI
+context (the brain's intent); assistant prose is never keyword-scanned for
+routing. The window shows the entity under discussion (e.g. the email being
+read, with reply state).
+
+## 9. Gate decision
 
 **2026-07-07 — GO.** Decided by Peter (build approval given same day as BRD).
 Slice 1 starts immediately; slice 2 requires the phase 2 data audit + eval plan

@@ -9,7 +9,8 @@ import { getEmbedder } from "./embeddings.js";
 import { search } from "./retrieval.js";
 import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
-import { sendReply, replySendingConfigured } from "../triage/send.js";
+import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
+import { draftReply as engineDraftReply } from "../triage/engine.js";
 import { publishUiContext, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import db from "./store.js";
@@ -37,13 +38,19 @@ const SPEAK =
 // forbidden from claiming actions it didn't tag.
 type Action =
   | { type: "send_reply"; email_id: number; body?: string }
+  | { type: "compose_email"; to: string; subject: string; body: string }
+  | { type: "draft_reply"; email_id: number; guidance?: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string };
 
 const ACTIONS =
   " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
-  '<<action:{"type":"send_reply","email_id":ID}>> sends that email\'s drafted reply (add "body":"..." only when the user asked to change what it says). ' +
+  '<<action:{"type":"send_reply","email_id":ID,"body":"..."}>> sends a reply on that email\'s thread. Omit "body" to send the unsent draft; ' +
+  "include \"body\" to send what the user asked for, written as a plain warm email signed 'Peter' — you can reply on a thread any number of times, including after an earlier reply was sent. " +
+  '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"..."}>> sends a brand-new email to any address. ' +
+  "Before compose_email, the recipient address and the gist of the message must be explicit in the conversation; if either is missing or you would be guessing the address, ask first instead of tagging. " +
+  '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> writes a grounded draft into the Replies window for review instead of sending; use it when the user says draft or wants to review before sending. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
   '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
@@ -58,6 +65,15 @@ const ACTIONS =
   "The system executes the tag before your words are spoken, so phrase the confirmation as already done. " +
   "NEVER say you sent, added, completed, scheduled, or remembered anything without its action tag. For anything outside these actions, say you can't do that yet.";
 
+// Email bodies get shown in the UI and read aloud; angle-bracketed and long
+// tracking URLs (newsletter plumbing) are pure noise in both registers.
+const cleanBody = (s: string) =>
+  s
+    .replace(/<https?:\/\/[^>]*>/g, " ")
+    .replace(/https?:\/\/\S{12,}/g, "(link)")
+    .replace(/\s+/g, " ")
+    .trim();
+
 // Returns a spoken failure sentence, or null when the action succeeded.
 async function executeAction(tenantId: string, a: Action): Promise<string | null> {
   try {
@@ -71,14 +87,69 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         | (UiEmail & { message_id: string | null })
         | undefined;
       if (!row) return "I couldn't find that email, so nothing was sent.";
-      if (row.sent_at) return "That reply already went out earlier, so I didn't send it again.";
-      const body = (a.body ?? row.draft_reply ?? "").trim();
-      if (!body) return "There's no drafted reply on that email, so nothing was sent.";
+      const dictated = (a.body ?? "").trim();
+      // Without new content, only an unsent draft can go out — resending an
+      // already-sent draft verbatim is always a mistake. With dictated content,
+      // replying again on the thread is exactly what the user asked for.
+      if (!dictated && row.sent_at) return "That draft already went out earlier. Tell me what the new reply should say and I'll send it.";
+      const body = dictated || (row.draft_reply ?? "").trim();
+      if (!body) return "There's no draft on that email yet. Tell me what to say, or ask me to draft one.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
       await sendReply({ from_addr: row.from_addr, subject: row.subject, draft_reply: body, message_id: row.message_id });
       const sentAt = new Date().toISOString();
       updateEmail(row.id, { status: "approved", sent_at: sentAt, draft_reply: body });
-      publishUiContext(tenantId, "inbox", { ...row, body: row.body.slice(0, 1200), draft_reply: body, status: "approved", sent_at: sentAt });
+      publishUiContext(tenantId, "inbox", { ...row, body: cleanBody(row.body).slice(0, 1200), draft_reply: body, status: "approved", sent_at: sentAt });
+      return null;
+    }
+    if (a.type === "compose_email") {
+      const to = (a.to ?? "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid email address for that, so nothing was sent.";
+      const body = (a.body ?? "").trim();
+      if (!body) return "I didn't catch what the email should say, so nothing was sent.";
+      if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
+      await sendEmail({ to, subject: (a.subject ?? "").trim() || "(no subject)", text: body });
+      return null;
+    }
+    if (a.type === "draft_reply") {
+      const row = db
+        .prepare(
+          `SELECT id, from_addr, subject, body, received_at, category, urgency, status, sent_at, draft_reply FROM inbound_emails
+           WHERE id = ? AND tenant_id = ?`
+        )
+        .get(a.email_id, tenantId) as
+        | (UiEmail & { category: string | null; urgency: string | null })
+        | undefined;
+      if (!row) return "I couldn't find that email, so nothing was drafted.";
+      const d = await engineDraftReply(
+        tenantId,
+        row.from_addr,
+        row.subject,
+        row.body,
+        {
+          category: (row.category as any) ?? "other",
+          needs_reply: true,
+          urgency: (row.urgency as any) ?? "normal",
+          reasoning: "user requested a reply by voice",
+        },
+        a.guidance?.trim() || undefined
+      );
+      updateEmail(row.id, {
+        draft_reply: d.reply,
+        draft_confident: d.confident ? 1 : 0,
+        draft_sources_json: JSON.stringify(d.used_sources.map((n) => d.sources[n - 1]?.document_path).filter(Boolean)),
+        status: "drafted",
+        sent_at: null, // fresh draft awaiting a fresh approval
+      });
+      publishUiContext(tenantId, "inbox", {
+        id: row.id,
+        from_addr: row.from_addr,
+        subject: row.subject,
+        received_at: row.received_at,
+        body: cleanBody(row.body).slice(0, 1200),
+        draft_reply: d.reply,
+        status: "drafted",
+        sent_at: null,
+      });
       return null;
     }
     if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
@@ -237,7 +308,7 @@ export async function streamVoiceReply(
     // follow-ups like "read that draft" refer to), plus any whose
     // sender/subject matches words from the conversation — the recent turns,
     // not just the current utterance, since follow-ups are mostly pronouns.
-    const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+    const clean = cleanBody;
     // Generic inbox vocabulary must not entity-match emails ("reply" would
     // match every no-reply@ sender). Only distinctive words count.
     const STOP = new Set([
