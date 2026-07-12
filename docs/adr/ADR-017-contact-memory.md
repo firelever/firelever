@@ -31,6 +31,15 @@ semantic lookup would *confirm* the wrong address rather than catch it.
   said metapd… — which one?") instead of executing. Deterministic, exact,
   cannot be talked out of it by a confident model.
 
+**The address gate (amendment, same day).** Voice cannot distinguish "metapd"
+from "metapetey", so no first-time address is used on faith: any dictated
+address not already on a contact makes the server spell it back letter by
+letter ("m, e, t, a, p, d, at gmail dot com — did I get every letter right?")
+and act only when the user confirms and the model re-tags the same address
+(short-lived pending slot; a corrected spelling starts a fresh round). Applies
+to compose, invites, guest-list changes, and forwards. Once confirmed, the
+address becomes a contact and is never re-interrogated.
+
 **Guest lists are editable.** `update_event` accepts `invite` (replaces
 attendees, `sendUpdates=all` notifies added and removed alike), closing the
 dead end where a wrong invite couldn't be fixed by voice.

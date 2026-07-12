@@ -35,6 +35,14 @@ export function contactByName(tenantId: string, name: string): { name: string; e
   return row ?? null;
 }
 
+// An address is "known" if ANY contact carries it — it was confirmed once,
+// spelled out, so it never needs re-confirmation.
+export function isKnownAddress(tenantId: string, email: string): boolean {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM tenant_contacts WHERE tenant_id = ? AND email = ?`).get(tenantId, email.trim().toLowerCase())
+  );
+}
+
 export function listContacts(tenantId: string, limit = 40): { name: string; email: string }[] {
   return db
     .prepare(`SELECT name, email FROM tenant_contacts WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ?`)

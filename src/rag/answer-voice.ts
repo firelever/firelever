@@ -24,7 +24,7 @@ import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js"
 import { previewCleanup, applyCleanup, labelInGmail } from "../triage/cleanup.js";
 import { publishUiContext, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
-import { upsertContact, contactByName, contactsBlock } from "./contacts.js";
+import { upsertContact, contactByName, contactsBlock, isKnownAddress } from "./contacts.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -79,6 +79,7 @@ const ACTIONS =
   "COMPOSE FLOW — brand-new emails are previewed before they leave, exactly like replies: " +
   '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"...","contact_name":"Dana"}>> STAGES the new email on screen without sending; the recipient address must be explicit in the conversation or in CONTACTS, ask if it is missing or you would be guessing. ' +
   'Always include "contact_name" with the person\'s name when the recipient is a person — the system remembers their address for next time. ' +
+  "ADDRESS GATE: any dictated address not already in CONTACTS makes the system spell it back and ask before acting (voice mishears spellings). When the user confirms it's right, tag the SAME action again with the SAME address and it will go through; if they correct the spelling, tag with the corrected address instead. " +
   'After staging, briefly say what it says and ask if you should send it. When they confirm, <<action:{"type":"send_email"}>> sends the staged email. Nothing ever goes out on compose_email alone. ' +
   '<<action:{"type":"forward_email","email_id":ID,"to":"name@domain.com","note":"optional line to include"}>> forwards that email; the address must be explicit, ask if it is not. ' +
   '<<action:{"type":"archive_email","email_id":ID}>> archives one email (moves it out of the inbox in Gmail; reversible). ' +
@@ -188,18 +189,41 @@ async function findCalendarTarget(
   return { ask: `I see a few upcoming: ${names}. Which one do you mean?` };
 }
 
-// A dictated address that differs from the one on file for the same person is
-// exactly how a wrong invite goes out (metapd vs metapetey, one voice turn
-// apart) — stop and ask instead of silently accepting either.
-function contactMismatch(tenantId: string, contactName: string | undefined, email: string): string | null {
-  if (!contactName?.trim()) return null;
-  const known = contactByName(tenantId, contactName);
-  if (known && known.email !== email.trim().toLowerCase())
-    return `Hold on: I have ${known.name} at ${known.email.replace("@", " at ")} from before, but this time you said ${email
-      .trim()
-      .toLowerCase()
-      .replace("@", " at ")}. Which one should I use?`;
-  return null;
+// Speak an address the way a careful human confirms one: the local part
+// letter by letter, symbols named, the domain in words. "metapd@gmail.com"
+// becomes "m, e, t, a, p, d, at gmail dot com".
+function spellEmail(email: string): string {
+  const [local, domain] = email.toLowerCase().split("@");
+  const spelled = [...(local ?? "")]
+    .map((ch) => (ch === "." ? "dot" : ch === "_" ? "underscore" : ch === "-" ? "dash" : ch === "+" ? "plus" : ch))
+    .join(", ");
+  return `${spelled}, at ${(domain ?? "").replace(/\./g, " dot ")}`;
+}
+
+// THE ADDRESS GATE. Voice dictation cannot distinguish "metapd" from
+// "metapetey", so no first-time address is ever used on faith:
+//  - on file (any contact) -> pass silently, it was confirmed once already;
+//  - conflicts with this person's known address -> name both, ask which;
+//  - brand new -> spell it back letter by letter and ask.
+// The question arms a short-lived pending slot; when the user confirms and
+// the model re-tags the action with the SAME address, it passes. A corrected
+// address starts a fresh round. Deterministic — not left to model attention.
+const pendingAddress = new Map<string, { email: string; at: number }>();
+const PENDING_TTL_MS = 3 * 60 * 1000;
+
+function addressGate(tenantId: string, contactName: string | undefined, email: string): string | null {
+  const e = email.trim().toLowerCase();
+  const pending = pendingAddress.get(tenantId);
+  if (pending && pending.email === e && Date.now() - pending.at < PENDING_TTL_MS) {
+    pendingAddress.delete(tenantId); // user heard the spell-back and confirmed
+    return null;
+  }
+  if (isKnownAddress(tenantId, e)) return null;
+  const known = contactName?.trim() ? contactByName(tenantId, contactName) : null;
+  pendingAddress.set(tenantId, { email: e, at: Date.now() });
+  if (known)
+    return `Hold on: I have ${known.name} at ${known.email.replace("@", " at ")} from before, but this time I heard ${spellEmail(e)}. Which one should I use?`;
+  return `That address is new to me, and spellings are easy to mishear, so let me read it back: ${spellEmail(e)}. Did I get every letter right?`;
 }
 
 // Server-truth confirmations are spoken by TTS, so dates must be said the way
@@ -282,7 +306,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid email address for that, so nothing was staged.";
       const body = (a.body ?? "").trim();
       if (!body) return "I didn't catch what the email should say, so nothing was staged.";
-      const mismatch = contactMismatch(tenantId, a.contact_name, to);
+      const mismatch = addressGate(tenantId, a.contact_name, to);
       if (mismatch) return mismatch;
       const subject = (a.subject ?? "").trim() || "(no subject)";
       stagedComposes.set(tenantId, { to, subject, body, at: Date.now(), contactName: a.contact_name?.trim() });
@@ -384,6 +408,8 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     if (a.type === "forward_email") {
       const to = (a.to ?? "").trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid address to forward that to, so nothing was sent.";
+      const gate = addressGate(tenantId, undefined, to);
+      if (gate) return gate;
       const row = db
         .prepare(`SELECT id, from_addr, subject, body, received_at FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
         .get(a.email_id, tenantId) as { id: number; from_addr: string; subject: string; body: string; received_at: string | null } | undefined;
@@ -453,7 +479,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         if ((a.invite?.length ?? 0) > invite.length)
           return "One of those invite addresses doesn't look right, so I haven't booked it yet. What's the exact email?";
         if (invite.length) {
-          const mismatch = contactMismatch(tenantId, a.contact_name, invite[0]);
+          const mismatch = addressGate(tenantId, a.contact_name, invite[0]);
           if (mismatch) return mismatch;
         }
         const ev = await createEvent({
@@ -496,7 +522,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (/^g\d+$/.test(ref) || a.match?.trim() || !ref) {
         if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't change that event.";
         if (invite.length) {
-          const mismatch = contactMismatch(tenantId, a.contact_name, invite[0]);
+          const mismatch = addressGate(tenantId, a.contact_name, invite[0]);
           if (mismatch) return mismatch;
         }
         const target = await findCalendarTarget(tenantId, ref, a.match);
