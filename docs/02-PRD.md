@@ -134,8 +134,17 @@ in their mail client for the flows Levi owns:
   sending (guidance-directed), preserving the human-approval path.
 - Ground truth for outbound state is `sent_at`, set only after SMTP succeeds;
   Levi may never claim an email was sent unless it is recorded as sent.
-- Deferred (documented, not yet wired): forwarding, attachments on outbound
-  mail, and an outbound-mail log table for composed (non-reply) sends.
+- **Staged preview (added 2026-07-11 after live testing):** dictated replies
+  are never sent in one breath — Levi stages the reply as a visible draft in
+  the Replies window, reads back the gist, and sends only on confirmation
+  (voice yes or the on-screen Approve). Revisions re-stage.
+- Forwarding to an explicit address (ask, never guess), single-email archive
+  and bulk newsletter archive (Gmail move, reversible — deletion deliberately
+  unsupported per ADR-012), and voice re-categorization across the six triage
+  categories.
+- Deferred (documented, not yet wired): attachments on outbound mail, an
+  outbound-mail log table for composed/forwarded sends, read/unread state,
+  unsubscribe automation, and user-defined custom categories.
 
 **Persistent memory (M):** user corrections and confirmed facts persist per
 tenant and override OCR'd document text in every answer path. Corrections that

@@ -10,7 +10,8 @@ import { search } from "./retrieval.js";
 import { listItems, createItem, updateItem } from "../workspace/store.js";
 import { updateEmail } from "../triage/store.js";
 import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
-import { draftReply as engineDraftReply } from "../triage/engine.js";
+import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js";
+import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { publishUiContext, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import db from "./store.js";
@@ -38,8 +39,13 @@ const SPEAK =
 // forbidden from claiming actions it didn't tag.
 type Action =
   | { type: "send_reply"; email_id: number; body?: string }
+  | { type: "stage_reply"; email_id: number; body: string }
   | { type: "compose_email"; to: string; subject: string; body: string }
   | { type: "draft_reply"; email_id: number; guidance?: string }
+  | { type: "forward_email"; email_id: number; to: string; note?: string }
+  | { type: "archive_email"; email_id: number }
+  | { type: "archive_newsletters" }
+  | { type: "categorize_email"; email_id: number; category: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
@@ -51,11 +57,18 @@ const THEMES = ["ember", "graphite", "nebula", "signal", "ivory"];
 
 const ACTIONS =
   " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
-  '<<action:{"type":"send_reply","email_id":ID,"body":"..."}>> sends a reply on that email\'s thread. Omit "body" to send the unsent draft; ' +
-  "include \"body\" to send what the user asked for, written as a plain warm email signed 'Peter' — you can reply on a thread any number of times, including after an earlier reply was sent. " +
+  "REPLY FLOW — replies are previewed before they leave: when the user dictates or requests a reply, stage it first with " +
+  '<<action:{"type":"stage_reply","email_id":ID,"body":"the full reply, plain and warm, signed Peter"}>> — it appears on screen — then briefly say what it says and ask if you should send it. ' +
+  'When they confirm (or say send the draft), <<action:{"type":"send_reply","email_id":ID}>> sends the staged/unsent draft. Never send dictated content without staging it for review first. ' +
+  "You can stage and send on a thread any number of times, including after an earlier reply was sent; if they want changes, stage again with the revised body. " +
+  '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> has me write a grounded draft for review instead (use when they want a fuller composed reply). ' +
   '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"..."}>> sends a brand-new email to any address. ' +
-  "Before compose_email, the recipient address and the gist of the message must be explicit in the conversation; if either is missing or you would be guessing the address, ask first instead of tagging. " +
-  '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> writes a grounded draft into the Replies window for review instead of sending; use it when the user says draft or wants to review before sending. ' +
+  "Before compose_email, the recipient address and the message must be explicit in the conversation AND you must have read the gist back and gotten a yes on a previous turn; if the address is missing or you would be guessing it, ask instead of tagging. " +
+  '<<action:{"type":"forward_email","email_id":ID,"to":"name@domain.com","note":"optional line to include"}>> forwards that email; the address must be explicit, ask if it is not. ' +
+  '<<action:{"type":"archive_email","email_id":ID}>> archives one email (moves it out of the inbox in Gmail; reversible). ' +
+  '<<action:{"type":"archive_newsletters"}>> archives all newsletter and promo clutter in one sweep. ' +
+  "Deleting email is deliberately not supported, archiving is the safe reversible equivalent, offer it instead. " +
+  '<<action:{"type":"categorize_email","email_id":ID,"category":"new_business|support|vendor_partner|recruiting|newsletter_spam|other"}>> re-files an email under a different category. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
   '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Replies window, notes is Prep). ' +
@@ -168,6 +181,69 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         status: "drafted",
         sent_at: null,
       });
+      return null;
+    }
+    if (a.type === "stage_reply") {
+      const row = db
+        .prepare(`SELECT id, from_addr, subject, body, received_at, status FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
+        .get(a.email_id, tenantId) as UiEmail | undefined;
+      if (!row) return "I couldn't find that email, so nothing was staged.";
+      const body = (a.body ?? "").trim();
+      if (!body) return "I didn't catch what the reply should say, so nothing was staged.";
+      updateEmail(row.id, { draft_reply: body, draft_confident: 1, status: "drafted", sent_at: null });
+      publishUiContext(tenantId, "inbox", {
+        ...row,
+        body: cleanBody(row.body).slice(0, 1200),
+        draft_reply: body,
+        status: "drafted",
+        sent_at: null,
+      });
+      return null;
+    }
+    if (a.type === "forward_email") {
+      const to = (a.to ?? "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid address to forward that to, so nothing was sent.";
+      const row = db
+        .prepare(`SELECT id, from_addr, subject, body, received_at FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
+        .get(a.email_id, tenantId) as { id: number; from_addr: string; subject: string; body: string; received_at: string | null } | undefined;
+      if (!row) return "I couldn't find that email, so nothing was forwarded.";
+      if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was forwarded.";
+      const note = (a.note ?? "").trim();
+      await sendEmail({
+        to,
+        subject: /^fwd?:/i.test(row.subject) ? row.subject : `Fwd: ${row.subject}`,
+        text:
+          (note ? note + "\n\n" : "") +
+          `---------- Forwarded message ----------\nFrom: ${row.from_addr}\nDate: ${row.received_at ?? ""}\nSubject: ${row.subject}\n\n${row.body}`,
+      });
+      return null;
+    }
+    if (a.type === "archive_email") {
+      const row = db
+        .prepare(`SELECT id, from_addr, subject FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
+        .get(a.email_id, tenantId) as { id: number } | undefined;
+      if (!row) return "I couldn't find that email, so nothing was archived.";
+      await applyCleanup(tenantId, [a.email_id]); // reversible Gmail archive; marks handled locally either way
+      publishUiContext(tenantId, "inbox", null);
+      return null;
+    }
+    if (a.type === "archive_newsletters") {
+      const ids = previewCleanup(tenantId).map((i) => i.id);
+      if (!ids.length) return "There's no newsletter clutter left to archive, the inbox is already tidy.";
+      await applyCleanup(tenantId, ids);
+      publishUiContext(tenantId, "inbox", null);
+      return null;
+    }
+    if (a.type === "categorize_email") {
+      if (!(CATEGORIES as readonly string[]).includes(a.category))
+        return "The categories are new business, support, vendor partner, recruiting, newsletter spam, and other.";
+      const row = db
+        .prepare(`SELECT id, from_addr, subject, body, received_at, draft_reply, status, sent_at FROM inbound_emails WHERE id = ? AND tenant_id = ?`)
+        .get(a.email_id, tenantId) as UiEmail | undefined;
+      if (!row) return "I couldn't find that email, so nothing was re-filed.";
+      updateEmail(row.id, { category: a.category });
+      invalidateLexicon(tenantId);
+      publishUiContext(tenantId, "inbox", { ...row, body: cleanBody(row.body).slice(0, 1200) });
       return null;
     }
     if (a.type === "add_task" || a.type === "add_event" || a.type === "add_note") {
