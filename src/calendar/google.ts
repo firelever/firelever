@@ -130,10 +130,13 @@ export async function createEvent(opts: {
 
 export async function updateEvent(
   gid: string,
-  fields: { title?: string; at?: string; durationMin?: number; meet?: boolean }
+  fields: { title?: string; at?: string; durationMin?: number; meet?: boolean; attendees?: string[] }
 ): Promise<CalEvent> {
   const patch: any = {};
   if (fields.title) patch.summary = fields.title;
+  // Replaces the guest list; Google notifies removed and added guests alike
+  // (sendUpdates=all below), which is exactly what fixing a wrong invite needs.
+  if (fields.attendees) patch.attendees = fields.attendees.map((email) => ({ email }));
   if (fields.at) {
     const start = await toDateTime(fields.at);
     patch.start = start;

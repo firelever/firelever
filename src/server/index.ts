@@ -23,6 +23,7 @@ import { getUiContext, resetUiContext } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { buildGreeting } from "./greeting.js";
+import { logTurn } from "./chatlog.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
@@ -492,6 +493,7 @@ const chatCompletions = async (c: any) => {
         text = "Sorry, I hit a problem pulling that up. Try again.";
       }
       if (!text.trim()) text = "Sorry, I lost my train of thought there. Could you ask me that again?";
+      logTurn(tenantId, question, text);
     }
     return c.json({
       id,
@@ -516,6 +518,7 @@ const chatCompletions = async (c: any) => {
     // A voice turn must NEVER end silent — ElevenLabs treats an empty reply as
     // "Brain returned no response" and fails the whole conversation.
     let spoke = false;
+    let full = ""; // durable history: the reply as actually spoken
     try {
       if (!question) {
         await s.write(frame({ content: greeting }));
@@ -523,6 +526,7 @@ const chatCompletions = async (c: any) => {
       } else {
         await streamVoiceReply(tenantId, question, async (t) => {
           if (t) spoke = true;
+          full += t;
           await s.write(frame({ content: t }));
         }, history);
       }
@@ -531,6 +535,7 @@ const chatCompletions = async (c: any) => {
       await s.write(frame({ content: "Sorry, I hit a problem pulling that up. Try again." }));
       spoke = true;
     }
+    if (question && full.trim()) logTurn(tenantId, question, full);
     if (!spoke) {
       console.warn("[convai] empty turn for question:", question.slice(0, 80));
       await s.write(frame({ content: "Sorry, I lost my train of thought there. Could you ask me that again?" }));

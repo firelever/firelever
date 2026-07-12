@@ -24,6 +24,7 @@ import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js"
 import { previewCleanup, applyCleanup, labelInGmail } from "../triage/cleanup.js";
 import { publishUiContext, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
+import { upsertContact, contactByName, contactsBlock } from "./contacts.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -50,15 +51,15 @@ const SPEAK =
 type Action =
   | { type: "send_reply"; email_id: number; body?: string }
   | { type: "stage_reply"; email_id: number; body: string }
-  | { type: "compose_email"; to: string; subject: string; body: string }
+  | { type: "compose_email"; to: string; subject: string; body: string; contact_name?: string }
   | { type: "send_email" }
   | { type: "draft_reply"; email_id: number; guidance?: string }
   | { type: "forward_email"; email_id: number; to: string; note?: string }
   | { type: "archive_email"; email_id: number }
   | { type: "archive_newsletters" }
   | { type: "categorize_email"; email_id: number; category: string }
-  | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[] }
-  | { type: "update_event"; id?: string | number; match?: string; title?: string; at?: string; duration_minutes?: number; meet?: boolean }
+  | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[]; contact_name?: string }
+  | { type: "update_event"; id?: string | number; match?: string; title?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[]; contact_name?: string }
   | { type: "cancel_event"; id?: string | number; match?: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
@@ -76,7 +77,8 @@ const ACTIONS =
   "You can stage and send on a thread any number of times, including after an earlier reply was sent; if they want changes, stage again with the revised body. " +
   '<<action:{"type":"draft_reply","email_id":ID,"guidance":"what the user wants it to say"}>> has me write a grounded draft for review instead (use when they want a fuller composed reply). ' +
   "COMPOSE FLOW — brand-new emails are previewed before they leave, exactly like replies: " +
-  '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"..."}>> STAGES the new email on screen without sending; the recipient address must be explicit in the conversation, ask if it is missing or you would be guessing. ' +
+  '<<action:{"type":"compose_email","to":"name@domain.com","subject":"...","body":"...","contact_name":"Dana"}>> STAGES the new email on screen without sending; the recipient address must be explicit in the conversation or in CONTACTS, ask if it is missing or you would be guessing. ' +
+  'Always include "contact_name" with the person\'s name when the recipient is a person — the system remembers their address for next time. ' +
   'After staging, briefly say what it says and ask if you should send it. When they confirm, <<action:{"type":"send_email"}>> sends the staged email. Nothing ever goes out on compose_email alone. ' +
   '<<action:{"type":"forward_email","email_id":ID,"to":"name@domain.com","note":"optional line to include"}>> forwards that email; the address must be explicit, ask if it is not. ' +
   '<<action:{"type":"archive_email","email_id":ID}>> archives one email (moves it out of the inbox in Gmail; reversible). ' +
@@ -85,8 +87,8 @@ const ACTIONS =
   '<<action:{"type":"categorize_email","email_id":ID,"category":"new_business|support|vendor_partner|recruiting|newsletter_spam|other"}>> re-files an email under a different category. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
   'CALENDAR: when Google Calendar is connected, add_event books a REAL calendar event — include "at" with an explicit date AND time (ask if you only have one of them), optional "duration_minutes" (default 30), ' +
-  '"meet":true to attach a Google Meet video link, and "invite":["addr@domain.com"] ONLY when the address is explicit in the conversation; never guess an invitee\'s email, ask for it. ' +
-  '<<action:{"type":"update_event","id":"g2","at":"YYYY-MM-DD HH:MM","duration_minutes":45,"title":"...","meet":true}>> reschedules, moves, renames, extends, or adds a Meet link to an existing event — include only the fields being changed. ' +
+  '"meet":true to attach a Google Meet video link, and "invite":["addr@domain.com"] ONLY when the address is explicit in the conversation or CONTACTS; never guess an invitee\'s email, ask for it. Include "contact_name" when inviting a person. ' +
+  '<<action:{"type":"update_event","id":"g2","at":"YYYY-MM-DD HH:MM","duration_minutes":45,"title":"...","meet":true,"invite":["addr@domain.com"],"contact_name":"Dana"}>> reschedules, moves, renames, extends, adds a Meet link, or FIXES THE GUEST LIST of an existing event — "invite" replaces the guests entirely (use it to correct a wrong invite address); include only the fields being changed. ' +
   'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones; if you have NOT seen a schedule listing this conversation, pass "match":"words from the event title" instead of an id and the system finds it. ' +
   '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
@@ -146,7 +148,7 @@ function duplicateSend(key: string, ttlMs = 120_000): boolean {
 // Staged new emails (compose preview parity with replies): compose_email
 // stages here and on screen; only a confirmed send_email actually sends.
 // Sent this way, nothing outbound ever skips the preview.
-const stagedComposes = new Map<string, { to: string; subject: string; body: string; at: number }>();
+const stagedComposes = new Map<string, { to: string; subject: string; body: string; at: number; contactName?: string }>();
 const STAGED_TTL_MS = 15 * 60 * 1000;
 
 // Every branch tells the model what day it is — in the calendar's timezone
@@ -184,6 +186,20 @@ async function findCalendarTarget(
   }
   const names = evs.slice(0, 3).map((e) => `${e.title} on ${spokenWhen(e.start.replace("T", " "))}`).join("; ");
   return { ask: `I see a few upcoming: ${names}. Which one do you mean?` };
+}
+
+// A dictated address that differs from the one on file for the same person is
+// exactly how a wrong invite goes out (metapd vs metapetey, one voice turn
+// apart) — stop and ask instead of silently accepting either.
+function contactMismatch(tenantId: string, contactName: string | undefined, email: string): string | null {
+  if (!contactName?.trim()) return null;
+  const known = contactByName(tenantId, contactName);
+  if (known && known.email !== email.trim().toLowerCase())
+    return `Hold on: I have ${known.name} at ${known.email.replace("@", " at ")} from before, but this time you said ${email
+      .trim()
+      .toLowerCase()
+      .replace("@", " at ")}. Which one should I use?`;
+  return null;
 }
 
 // Server-truth confirmations are spoken by TTS, so dates must be said the way
@@ -266,8 +282,10 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return "I don't have a valid email address for that, so nothing was staged.";
       const body = (a.body ?? "").trim();
       if (!body) return "I didn't catch what the email should say, so nothing was staged.";
+      const mismatch = contactMismatch(tenantId, a.contact_name, to);
+      if (mismatch) return mismatch;
       const subject = (a.subject ?? "").trim() || "(no subject)";
-      stagedComposes.set(tenantId, { to, subject, body, at: Date.now() });
+      stagedComposes.set(tenantId, { to, subject, body, at: Date.now(), contactName: a.contact_name?.trim() });
       publishUiContext(tenantId, "inbox", {
         id: -1,
         from_addr: to,
@@ -288,6 +306,9 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (duplicateSend(`${tenantId}:compose:${staged.to}`))
         return "I just sent an email to that address moments ago, so I held this one to avoid a duplicate. If you really want another, give it a minute and ask again.";
       await sendEmail({ to: staged.to, subject: staged.subject, text: staged.body });
+      // The user approved this address for this person: remember it, so next
+      // time Levi proposes it and catches near-miss dictations.
+      if (staged.contactName) upsertContact(tenantId, staged.contactName, staged.to);
       stagedComposes.delete(tenantId);
       publishUiContext(tenantId, "inbox", {
         id: -1,
@@ -431,6 +452,10 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
         const invite = (a.invite ?? []).map((s) => s.trim()).filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
         if ((a.invite?.length ?? 0) > invite.length)
           return "One of those invite addresses doesn't look right, so I haven't booked it yet. What's the exact email?";
+        if (invite.length) {
+          const mismatch = contactMismatch(tenantId, a.contact_name, invite[0]);
+          if (mismatch) return mismatch;
+        }
         const ev = await createEvent({
           title: a.title.trim(),
           at: a.at.trim(),
@@ -439,6 +464,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
           attendees: invite,
         });
         invalidateLexicon(tenantId);
+        if (a.contact_name && invite.length === 1) upsertContact(tenantId, a.contact_name, invite[0]);
         publishUiContext(tenantId, "schedule", null);
         const who = invite.length === 1 ? ` invite sent to ${invite[0].replace("@", " at ")},` : invite.length > 1 ? ` invites sent to ${invite.length} people,` : "";
         return `Booked. ${a.title.trim()}, ${spokenWhen(a.at)},${ev.meet_link ? " with a Google Meet link," : ""}${who} on your Google Calendar.`;
@@ -455,21 +481,31 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "update_event") {
       const ref = String(a.id ?? "").trim().toLowerCase();
+      const invite = (a.invite ?? []).map((s) => s.trim()).filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+      if ((a.invite?.length ?? 0) > invite.length)
+        return "One of those invite addresses doesn't look right, so I haven't changed the guest list. What's the exact email?";
       const fields = {
         title: a.title?.trim() || undefined,
         at: a.at?.trim() || undefined,
         durationMin: a.duration_minutes,
         meet: a.meet || undefined,
+        attendees: invite.length ? invite : undefined,
       };
-      if (!fields.title && !fields.at && !fields.durationMin && !fields.meet)
-        return "Tell me what to change about that event: the time, the title, the length, or adding a Meet link.";
+      if (!fields.title && !fields.at && !fields.durationMin && !fields.meet && !fields.attendees)
+        return "Tell me what to change about that event: the time, the title, the length, the guest list, or adding a Meet link.";
       if (/^g\d+$/.test(ref) || a.match?.trim() || !ref) {
         if (!calendarConfigured()) return "Your Google Calendar isn't connected, so I can't change that event.";
+        if (invite.length) {
+          const mismatch = contactMismatch(tenantId, a.contact_name, invite[0]);
+          if (mismatch) return mismatch;
+        }
         const target = await findCalendarTarget(tenantId, ref, a.match);
         if ("ask" in target) return target.ask;
         const ev = await updateEvent(target.gid, fields);
+        if (a.contact_name && invite.length === 1) upsertContact(tenantId, a.contact_name, invite[0]);
         publishUiContext(tenantId, "schedule", null);
-        return `Done. ${ev.title} is ${fields.at ? `now ${spokenWhen(fields.at)}` : "updated"}${fields.meet && ev.meet_link ? ", with a Google Meet link attached" : ""}, on your Google Calendar. Anyone invited gets the update.`;
+        const guests = fields.attendees ? ` The invite now goes to ${invite.map((i) => i.replace("@", " at ")).join(" and ")}, and the old address was dropped.` : "";
+        return `Done. ${ev.title} is ${fields.at ? `now ${spokenWhen(fields.at)}` : "updated"}${fields.meet && ev.meet_link ? ", with a Google Meet link attached" : ""}, on your Google Calendar.${guests || " Anyone invited gets the update."}`;
       }
       const local: { title?: string; at?: string } = {};
       if (fields.title) local.title = fields.title;
@@ -689,7 +725,7 @@ export async function streamVoiceReply(
     .map((h) => `${h.role}: ${h.text.slice(0, 300)}`)
     .join("\n");
   const convoBlock = convo ? `Conversation so far:\n${convo}\n\n` : "";
-  const MEM = memoryBlock(tenantId);
+  const MEM = memoryBlock(tenantId) + contactsBlock(tenantId);
   // EVERY branch gets today's date: a turn that can book meetings but doesn't
   // know the date once scheduled "tomorrow" a year in the past.
   const dateBlock = (await todayLine()) + "\n\n";
