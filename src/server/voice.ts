@@ -28,7 +28,12 @@ export async function transcribe(audio: ArrayBuffer, contentType: string): Promi
 // Synthesize speech for the answer text via ElevenLabs; returns mp3 bytes.
 export async function synthesize(text: string): Promise<Buffer> {
   // Keep spoken replies snappy — long answers are read from the screen.
-  const spoken = text.replace(/\[\d+\]/g, "").slice(0, 900);
+  // Commas inside numbers make the voice pause mid-number; strip them here so
+  // every TTS path is covered, not just the streaming one.
+  const spoken = text
+    .replace(/\[\d+\]/g, "")
+    .replace(/(\d),(?=\d{3}\b)/g, "$1")
+    .slice(0, 900);
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE()}`, {
     method: "POST",
     headers: { "xi-api-key": ELEVEN_KEY(), "Content-Type": "application/json" },

@@ -41,7 +41,10 @@ const SPEAK =
   "Answer in one or two short, natural spoken sentences. Never use dashes or em dashes. " +
   "Write the reply exactly as it should be spoken aloud: expand abbreviations (write Street not St., " +
   "Avenue not Ave., Apartment not Apt.), read email addresses as 'name at domain dot com', and avoid " +
-  "symbols entirely: say 'at' not @, 'and' not &, 'percent' not %, and 'dollars' for $ amounts.";
+  "symbols entirely: say 'at' not @, 'and' not &, 'percent' not %, and 'dollars' for $ amounts. " +
+  "NUMBERS: never put a comma inside a number (write 288000 dollars or 288 thousand dollars, never 288,000 — " +
+  "the voice pauses at the comma). House numbers, street numbers, unit numbers, and zip codes are read digit " +
+  "by digit: write them with spaces, so 4834 Ute Street becomes '4 8 3 4 Ute Street'.";
 
 // ---- action protocol ----
 // The voice model can DO a small set of things, not just talk. It tags exactly
@@ -1079,6 +1082,22 @@ export async function streamVoiceReply(
   // screen can caption exactly what Levi is saying as he says it.
   let emitted = false;
   let sentBuf = "";
+  // TTS pauses at commas inside numbers ("288,000" reads as "288 … 000").
+  // The prompt asks the model not to write them; this strips any that slip
+  // through. A number can arrive split across deltas ("288," then "000"), so
+  // a trailing digit-or-comma tail is carried into the next chunk.
+  let numCarry = "";
+  const cleanNumbers = (t: string): string => {
+    let s = numCarry + t;
+    const tail = s.match(/[\d,]+$/);
+    if (tail && /\d/.test(tail[0])) {
+      numCarry = tail[0];
+      s = s.slice(0, s.length - tail[0].length);
+    } else {
+      numCarry = "";
+    }
+    return s.replace(/(\d),(?=\d{3}\b)/g, "$1");
+  };
   const flushSpeak = (force = false) => {
     for (;;) {
       const m = sentBuf.match(/[.!?…](\s|$)/);
@@ -1093,10 +1112,21 @@ export async function streamVoiceReply(
     }
   };
   const emit = async (t: string) => {
-    emitted = true;
-    sentBuf += t;
+    const out = cleanNumbers(t);
+    emitted = true; // the carry may hold the text back briefly, but speech IS coming
+    if (!out) return;
+    sentBuf += out;
     flushSpeak();
-    await onDelta(t);
+    await onDelta(out);
+  };
+  // Stream over: release whatever the number carry still holds.
+  const flushNumbers = async () => {
+    const rest = numCarry.replace(/(\d),(?=\d{3}\b)/g, "$1");
+    numCarry = "";
+    if (rest) {
+      sentBuf += rest;
+      await onDelta(rest);
+    }
   };
 
   // The reply stream is multiplexed: it may open with up to two structured
@@ -1264,7 +1294,8 @@ export async function streamVoiceReply(
       // The action already happened; regenerating the turn would replay it
       // (this exact path double-sent an email). Confirm truthfully instead.
       await emit("That went through, but I glitched while wrapping up. The action is done.");
-      flushSpeak(true);
+      await flushNumbers();
+    flushSpeak(true);
       return;
     }
     await new Promise((r) => setTimeout(r, 600));
@@ -1281,6 +1312,7 @@ export async function streamVoiceReply(
   //    done, so regenerate once — model silence is nondeterministic.
   if (!emitted && acted && doneLabel) {
     await emit(`${doneLabel}, done.`);
+    await flushNumbers();
     flushSpeak(true);
     return;
   }
@@ -1300,5 +1332,13 @@ export async function streamVoiceReply(
     await streamVoiceReply(tenantId, question, onDelta, history, intent, research);
     return;
   }
+  // LIVENESS INVARIANT, enforced at the source: no voice turn may end silent,
+  // for EVERY caller. The ElevenLabs endpoint had its own fallback; the text
+  // endpoint didn't, and a sourceless docs turn once returned "" after the
+  // model answered with nothing but tags twice.
+  if (!emitted && !acted) {
+    await emit("I came up empty on that one, sorry. Try asking it another way.");
+  }
+  await flushNumbers();
   flushSpeak(true); // caption any trailing words that lacked end punctuation
 }
