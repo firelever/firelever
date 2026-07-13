@@ -369,7 +369,7 @@ export function App() {
   const lastAction = [...activity].reverse().find((e) => e.kind === "action" && e.state === "run");
   const acting = !!lastAction && nowMs - lastAction.at < 6000 && !activity.some((r) => r.id > lastAction.id && r.kind === "result");
   const evGlyph = (e: UiEvent) =>
-    e.kind === "route" ? "→" : e.kind === "search" ? "◎" : e.kind === "sources" ? "▤" : e.kind === "action" ? "⚡" : e.kind === "result" ? (e.state === "fail" ? "✕" : "✓") : "◈";
+    e.kind === "route" ? "→" : e.kind === "search" ? "◎" : e.kind === "sources" ? "▤" : e.kind === "action" ? "⚡" : e.kind === "result" ? (e.state === "fail" ? "✕" : "✓") : e.kind === "ingest" ? "⇪" : "◈";
 
   // Live-data window bodies for the wired windows; static previews for the rest.
   function renderWindow(id: string): ReactNode {

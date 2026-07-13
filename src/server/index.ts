@@ -19,7 +19,7 @@ import db from "../rag/store.js";
 import { emailsByStatus, updateEmail } from "../triage/store.js";
 import { previewCleanup, applyCleanup } from "../triage/cleanup.js";
 import { sendReply, replySendingConfigured } from "../triage/send.js";
-import { getUiContext, resetUiContext } from "./ui-context.js";
+import { getUiContext, resetUiContext, publishUiEvent } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { buildGreeting } from "./greeting.js";
@@ -169,10 +169,27 @@ app.post("/api/documents", limited("upload"), async (c) => {
   // terminal line. Keeps the connection alive so the browser/Fly proxy don't time
   // out mid-OCR and the machine stays awake — the "Failed to fetch" fix.
   const displayPath = `uploads/${path.basename(file.name)}`;
+  publishUiEvent(tenant.id, { kind: "ingest", state: "run", label: `Reading ${path.basename(file.name)} (upload)` });
   return stream(c, async (s) => {
     const job = ingestFile(tenant.id, tmp, displayPath)
-      .then((result) => ({ ok: true as const, result }))
-      .catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }))
+      .then((result) => {
+        publishUiEvent(tenant.id, {
+          kind: "ingest",
+          state: result.outcome === "empty" ? "fail" : "ok",
+          ...(result.outcome === "ingested" ? { n: result.chunks } : {}),
+          label:
+            result.outcome === "ingested"
+              ? `${path.basename(file.name)} indexed`
+              : result.outcome === "unchanged"
+                ? `${path.basename(file.name)} already in the knowledge base`
+                : `${path.basename(file.name)} had no readable text`,
+        });
+        return { ok: true as const, result };
+      })
+      .catch((e) => {
+        publishUiEvent(tenant.id, { kind: "ingest", state: "fail", label: `${path.basename(file.name)} failed` });
+        return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+      })
       .finally(() => {
         try {
           fs.unlinkSync(tmp);
@@ -595,7 +612,17 @@ if (process.env.WATCH_INBOX !== "0") {
     .catch((e) => console.error("[watcher] failed to start:", e));
   // One-shot sweep for document attachments that earlier triage runs skipped
   // (old category gate, crashes) — new mail is handled inline by the watcher.
-  import("../triage/run.js")
-    .then(({ backfillAttachments }) => backfillAttachments("firelever"))
-    .catch((e) => console.error("[backfill] failed:", e));
+  // Staggered: connecting at the same instant as the watcher made Gmail
+  // reject one of the connections ("failed to receive greeting"); a second
+  // attempt covers a transient miss, and attachments_json staying NULL means
+  // an outright failure simply retries on the next boot.
+  const runBackfill = (attempt: number) => {
+    import("../triage/run.js")
+      .then(({ backfillAttachments }) => backfillAttachments("firelever"))
+      .catch((e) => {
+        console.error(`[backfill] attempt ${attempt} failed:`, e instanceof Error ? e.message : e);
+        if (attempt < 2) setTimeout(() => runBackfill(attempt + 1), 90_000);
+      });
+  };
+  setTimeout(() => runBackfill(1), 30_000);
 }

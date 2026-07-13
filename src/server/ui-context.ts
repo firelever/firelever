@@ -24,7 +24,7 @@ export interface UiEmail {
 export interface UiEvent {
   id: number;
   at: number; // epoch ms
-  kind: "route" | "search" | "sources" | "action" | "result" | "note" | "speak";
+  kind: "route" | "search" | "sources" | "action" | "result" | "note" | "speak" | "ingest";
   state?: "run" | "ok" | "fail";
   label: string;
   n?: number; // count when meaningful (sources found, emails archived)

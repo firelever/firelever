@@ -10,6 +10,7 @@ import { classifyEmail, draftReply } from "./engine.js";
 import { insertEmail, updateEmail } from "./store.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
+import { publishUiEvent } from "../server/ui-context.js";
 
 export interface Attachment {
   filename: string;
@@ -55,10 +56,22 @@ async function ingestAttachments(
     if (!SUPPORTED.includes(ext) || att.content.length > ATTACH_MAX_BYTES) continue;
     const tmp = path.join(os.tmpdir(), `flv-att-${Date.now()}-${name}`);
     fs.writeFileSync(tmp, att.content);
+    // Ingestion is visible work: the activity rail shows each document being
+    // read, OCR'd, and indexed, whether it arrived by email or upload.
+    publishUiEvent(tenantId, { kind: "ingest", state: "run", label: `Reading ${name} from ${email.from_addr.split("@")[0]}'s email` });
     try {
       const r = await ingestFile(tenantId, tmp, `email/${domain}/${name}`, { preamble });
-      if (r.outcome === "ingested" || r.outcome === "unchanged") added.push(name);
+      if (r.outcome === "ingested") {
+        publishUiEvent(tenantId, { kind: "ingest", state: "ok", n: r.chunks, label: `${name} indexed`, });
+        added.push(name);
+      } else if (r.outcome === "unchanged") {
+        publishUiEvent(tenantId, { kind: "ingest", state: "ok", label: `${name} already in the knowledge base` });
+        added.push(name);
+      } else {
+        publishUiEvent(tenantId, { kind: "ingest", state: "fail", label: `${name} had no readable text` });
+      }
     } catch (e) {
+      publishUiEvent(tenantId, { kind: "ingest", state: "fail", label: `${name} failed: ${e instanceof Error ? e.message.slice(0, 50) : "error"}` });
       console.error(`    attachment failed (${name}): ${e instanceof Error ? e.message : e}`);
     } finally {
       try {
