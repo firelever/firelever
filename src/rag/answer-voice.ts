@@ -122,9 +122,11 @@ const CTX =
   "their documents but the provided sources do not contain the answer, do NOT give up: output ONLY " +
   '<<ctx:{"search":"a better search query naming the document and the thing sought"}>> and nothing else — the ' +
   "system searches again and redoes the turn (one retry; if the retried sources still lack it, say so plainly). " +
-  'Whenever your answer discusses one specific email from the list, you MUST start your reply with ' +
+  'Whenever your answer discusses ONE specific email from the list, you MUST start your reply with ' +
   '<<ctx:{"email_id":ID}>> so the screen shows THAT email — every time, follow-ups included; the screen may ' +
-  "otherwise be showing a stale email from earlier.";
+  "otherwise be showing a stale email from earlier. But when your answer is an OVERVIEW of several emails " +
+  "(what's in the inbox, what needs replies, what to clean up), do NOT pin any single one — the screen shows " +
+  "the inbox list, which is right for an overview.";
 
 // Email bodies get shown in the UI and read aloud; angle-bracketed and long
 // tracking URLs (newsletter plumbing) are pure noise in both registers.
@@ -950,14 +952,22 @@ export async function streamVoiceReply(
     const scored = rows
       .map((r, i) => {
         const hay = hays[i];
-        let score = 0;
-        for (const w of nowWords) if (wordHit(hay, w)) score += 2;
-        for (const w of pastWords) if (wordHit(hay, w)) score += 1;
-        return { r, score };
+        const hitsNow = nowWords.filter((w) => wordHit(hay, w));
+        const hitsPast = pastWords.filter((w) => wordHit(hay, w));
+        return { r, score: hitsNow.length * 2 + hitsPast.length, hits: [...hitsNow, ...hitsPast] };
       })
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score); // rows are newest-first, sort is stable → recency tiebreak
     const matches = scored.map((x) => x.r);
+    // A single-word match may pin only when the word names the email itself
+    // (sender or subject) — one word buried in a body is a coincidence, not a
+    // reference ("business" in a promo body must not hijack the screen).
+    const top = scored[0];
+    const pinConfident =
+      top &&
+      (top.hits.length >= 2 ||
+        top.hits.some((w) => wordHit((top.r.from_addr + " " + top.r.subject).toLowerCase(), w)) ||
+        top.hits.some((w) => contactByName(tenantId, w) !== null)); // known people are entities wherever they appear
     const drafted = rows.filter((r) => r.draft_reply);
     // Surface the email under discussion, content included. "The latest email"
     // is an explicit recency reference; otherwise only a real entity match or
@@ -969,7 +979,7 @@ export async function streamVoiceReply(
     // The pending-draft fallback only fires when the user is actually asking
     // about drafts/replies — a generic inbox question must not pin it.
     const asksDraft = /\b(drafts?|repl(y|ies)|staged|approve|approval)\b/i.test(question);
-    const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? (asksDraft ? drafted.find((r) => r.status === "drafted") : null) ?? null;
+    const focus = (wantsLatest ? rows[0] : null) ?? (pinConfident ? top.r : null) ?? (asksDraft ? drafted.find((r) => r.status === "drafted") : null) ?? null;
     publishUiEvent(tenantId, { kind: "search", state: "ok", label: "Scanning inbox", n: rows.length });
     if (focus) publishUiEvent(tenantId, { kind: "note", label: `Focused: "${focus.subject.slice(0, 40)}"` });
     publishUiContext(
@@ -1097,6 +1107,7 @@ export async function streamVoiceReply(
   let reroute: Intent | null = null;
   let research: string | null = null; // model-requested retry with a better search query
   let acted = false; // an action executed — this turn must never be regenerated
+  let doneLabel: string | null = null; // label of a successfully executed action
 
   const runOnce = async (): Promise<void> => {
     const stream = client.messages.stream({
@@ -1122,6 +1133,7 @@ export async function streamVoiceReply(
           parsed = JSON.parse(raw) as Action;
           publishUiEvent(tenantId, { kind: "action", state: "run", label: actionLabel(parsed) });
           replace = await executeAction(tenantId, parsed);
+          if (replace === null && parsed) doneLabel = actionLabel(parsed);
         } catch {
           /* replace message stands */
         }
@@ -1257,6 +1269,23 @@ export async function streamVoiceReply(
     }
     await new Promise((r) => setTimeout(r, 600));
     await runOnce(); // one transparent retry for transient API failures
+  }
+
+  // GRACEFUL SILENCE HANDLING. Two ways a turn used to end mute and fall to
+  // "sorry, I lost my train of thought" — making Levi look confused when he
+  // wasn't:
+  //  - the model tagged an action and then said nothing: the action DID run
+  //    (a show_window once executed perfectly and then Levi asked the user to
+  //    repeat themselves) — confirm it instead of apologizing;
+  //  - the model emitted only a ctx tag (a pin) and stopped: nothing was
+  //    done, so regenerate once — model silence is nondeterministic.
+  if (!emitted && acted && doneLabel) {
+    await emit(`${doneLabel}, done.`);
+    flushSpeak(true);
+    return;
+  }
+  if (!emitted && !acted && !reroute && !research) {
+    await runOnce();
   }
 
   // Model-requested reroute: the deterministic router picked the wrong domain

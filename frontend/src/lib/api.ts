@@ -44,6 +44,7 @@ export const api = {
   redlines: () => req<RedlineResult>("/redlines", { method: "POST" }),
   voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
   voiceText: (text: string) => req<{ answer: string; audio: string | null }>("/voice/text", { method: "POST", body: JSON.stringify({ text }) }),
+  inboxRecent: () => req<{ emails: InboxRow[] }>("/inbox/recent"),
   uiContext: () => req<UiCtx>("/ui/context"),
   uiSessionStart: () => req<{ ok: boolean }>("/ui/session-start", { method: "POST", body: "{}" }),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
@@ -62,6 +63,7 @@ export const api = {
 export interface VoiceResult { transcript: string; answerable: boolean; answer: string; citations: { n: number; document: string; heading: string | null }[]; audio: string | null }
 
 export interface UiEmail { id: number; from_addr: string; subject: string; received_at: string | null; body: string; draft_reply: string | null; status: string; sent_at: string | null }
+export interface InboxRow { id: number; from_addr: string; subject: string; category: string | null; status: string; needs_reply: number | null; received_at: string | null }
 export interface UiEvent { id: number; at: number; kind: "route" | "search" | "sources" | "action" | "result" | "note" | "speak"; state?: "run" | "ok" | "fail"; label: string; n?: number }
 export interface UiCtx { seq: number; window: string | null; email?: UiEmail | null; theme?: string | null; events?: UiEvent[] }
 

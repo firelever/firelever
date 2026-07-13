@@ -353,6 +353,21 @@ app.post("/api/voice", limited("ask"), async (c) => {
 // ---------- real-time UI context: what the voice conversation is about ----------
 // The voice brain publishes a context event per turn (window + entity); the
 // frontend polls this and follows along, surfacing the matching window live.
+// Recent inbox emails for the Replies window's list view: when the
+// conversation is about the inbox in general (no single email pinned), the
+// window shows what's actually in there instead of claiming "inbox clear".
+app.get("/api/inbox/recent", (c) => {
+  const rows = db
+    .prepare(
+      `SELECT id, from_addr, subject, category, status, needs_reply, received_at
+       FROM inbound_emails WHERE tenant_id = ?
+       AND status NOT IN ('archived', 'archive_missing')
+       ORDER BY id DESC LIMIT 8`
+    )
+    .all(c.get("tenant").id);
+  return c.json({ emails: rows });
+});
+
 app.get("/api/ui/context", (c) => {
   return c.json(getUiContext(c.get("tenant").id) ?? { seq: 0, window: null, email: null });
 });

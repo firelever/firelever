@@ -4,7 +4,7 @@ import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, InboxRow } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
 
@@ -30,6 +30,7 @@ export function App() {
   const [liveAnswer, setLiveAnswer] = useState<AskResult | null>(null);
   const [lastQuestion, setLastQuestion] = useState("");
   const [queue, setQueue] = useState<Draft[]>([]);
+  const [inboxRecent, setInboxRecent] = useState<InboxRow[]>([]);
   const [tasks, setTasks] = useState<WsItem[]>([]);
   const [events, setEvents] = useState<WsItem[]>([]);
   const [notes, setNotes] = useState<WsItem[]>([]);
@@ -229,7 +230,10 @@ export function App() {
     catch { setAuthed(false); }
   };
 
-  const loadTriage = () => api.triage().then((r) => setQueue(r.queue)).catch(() => {});
+  const loadTriage = () => {
+    api.triage().then((r) => setQueue(r.queue)).catch(() => {});
+    api.inboxRecent().then((r) => setInboxRecent(r.emails)).catch(() => {});
+  };
   const loadWorkspace = () => {
     api.workspace("task").then((r) => setTasks(r.items)).catch(() => {});
     api.workspace("event").then((r) => setEvents(r.items)).catch(() => {});
@@ -399,7 +403,24 @@ export function App() {
       const d = queue[0];
       // Skip the focused email when it's the same one awaiting approval below.
       const fe = focusEmail && (!d || focusEmail.id !== d.id) ? focusEmail : null;
-      if (!fe && !d) return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>Inbox clear — Levi will draft replies as mail arrives.</div>;
+      // No pinned email, no pending draft: show what's actually in the inbox.
+      // ("Inbox clear" while Levi narrates five emails read as broken.)
+      if (!fe && !d) {
+        if (inboxRecent.length === 0)
+          return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>Inbox clear — Levi will draft replies as mail arrives.</div>;
+        return (
+          <div>
+            {inboxRecent.map((e) => (
+              <div key={e.id} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "7px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.subject}</span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--mut2)", flex: "none", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis" }}>{e.from_addr.replace(/@.*/, "@…")}</span>
+                {e.needs_reply ? <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--warn)", flex: "none" }}>REPLY</span> : e.category === "newsletter_spam" ? <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--mut2)", flex: "none" }}>PROMO</span> : null}
+              </div>
+            ))}
+            <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 10 }}>{inboxRecent.length} RECENT · SAY A SENDER'S NAME TO OPEN ONE</div>
+          </div>
+        );
+      }
       return (
         <div>
           {fe && (
