@@ -13,6 +13,10 @@ export interface LiveHandlers {
   onMode: (m: LiveMode) => void;
   onMessage: (role: "user" | "agent", text: string) => void;
   onError: (msg: string) => void;
+  // Why the session ended, from the SDK: "agent" = the agent hung up on
+  // purpose (silence timeout, max duration) — do not auto-reconnect;
+  // "error"/"user"/unknown = unexpected — reconnect logic may kick in.
+  onEndReason?: (reason: string) => void;
 }
 
 export interface LiveConvo {
@@ -34,7 +38,10 @@ export async function startLive(h: LiveHandlers, firstMessage?: string): Promise
     connectionType: "webrtc",
     ...(opening ? { overrides: { agent: { firstMessage: opening } } } : {}),
     onConnect: () => h.onStatus("connected"),
-    onDisconnect: () => h.onStatus("disconnected"),
+    onDisconnect: (details?: { reason?: string }) => {
+      h.onEndReason?.(details?.reason ?? "");
+      h.onStatus("disconnected");
+    },
     onError: (msg) => h.onError(msg),
     onStatusChange: ({ status }) => {
       if (status === "connecting") h.onStatus("connecting");

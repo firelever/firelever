@@ -68,9 +68,13 @@ export function App() {
   // polls health and reopens the session, so Levi comes back on his own.
   const endingRef = useRef(false);
   const reconnectSeq = useRef(0);
+  const endReasonRef = useRef("");
   const [reconnecting, setReconnecting] = useState(false);
 
   const liveHandlers = () => ({
+    onEndReason: (r: string) => {
+      endReasonRef.current = r;
+    },
     onStatus: (s: string) => {
       if (s === "connected") {
         setMode("hearing");
@@ -83,6 +87,16 @@ export function App() {
         if (endingRef.current) {
           setLiveOn(false);
           setMode("muted");
+          return;
+        }
+        // The agent hanging up on purpose (silence timeout, max duration) is
+        // a clean end — reconnecting would reopen a session nobody asked for
+        // and burn credits forever. Only unexpected drops reconnect.
+        if (endReasonRef.current === "agent") {
+          endReasonRef.current = "";
+          setLiveOn(false);
+          setMode("muted");
+          setMessages((m) => [...m, { role: "bot", text: "Levi hung up after a quiet stretch. Tap the mic when you want to pick it back up." }]);
           return;
         }
         beginReconnect();

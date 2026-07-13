@@ -56,6 +56,7 @@ type Action =
   | { type: "draft_reply"; email_id: number; guidance?: string }
   | { type: "forward_email"; email_id: number; to: string; note?: string }
   | { type: "archive_email"; email_id: number }
+  | { type: "archive_emails"; email_ids: number[] }
   | { type: "archive_newsletters" }
   | { type: "categorize_email"; email_id: number; category: string }
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[]; contact_name?: string }
@@ -83,7 +84,8 @@ const ACTIONS =
   'After staging, briefly say what it says and ask if you should send it. When they confirm, <<action:{"type":"send_email"}>> sends the staged email. Nothing ever goes out on compose_email alone. ' +
   '<<action:{"type":"forward_email","email_id":ID,"to":"name@domain.com","note":"optional line to include"}>> forwards that email; the address must be explicit, ask if it is not. ' +
   '<<action:{"type":"archive_email","email_id":ID}>> archives one email (moves it out of the inbox in Gmail; reversible). ' +
-  '<<action:{"type":"archive_newsletters"}>> archives all newsletter and promo clutter in one sweep. ' +
+  '<<action:{"type":"archive_emails","email_ids":[ID,ID]}>> archives SPECIFIC emails by their ids — use this when the user agrees to archive particular emails you named (test mail, receipts, notifications). ' +
+  '<<action:{"type":"archive_newsletters"}>> archives ONLY the newsletter and promo category in one sweep; never use it for other emails. ' +
   "Deleting email is deliberately not supported, archiving is the safe reversible equivalent, offer it instead. " +
   '<<action:{"type":"categorize_email","email_id":ID,"category":"new_business|support|vendor_partner|recruiting|newsletter_spam|other"}>> re-files an email under a different category. ' +
   '<<action:{"type":"add_task","title":"..."}>> likewise add_event and add_note (optional "at":"YYYY-MM-DD HH:MM", optional "body"). ' +
@@ -189,6 +191,30 @@ async function findCalendarTarget(
   return { ask: `I see a few upcoming: ${names}. Which one do you mean?` };
 }
 
+// COHERENCE SENTINEL for replies: a reply written for one person must never
+// land on another sender's thread. A "Hi Dana" draft was once staged onto a
+// Google billing notice (the model hallucinated email_id 1) — one Approve
+// from replying to workspace@google.com. The salutation is cross-examined
+// against the target thread before anything is staged or sent.
+function replyThreadMismatch(
+  tenantId: string,
+  draftBody: string,
+  row: { from_addr: string; subject: string; body: string }
+): string | null {
+  const m = draftBody.trim().match(/^(?:hi|hello|hey|dear)[ ,]+([a-z][a-z'-]+)/i);
+  if (!m) return null;
+  const name = m[1];
+  const hay = (row.from_addr + " " + row.subject + " " + row.body.slice(0, 400)).toLowerCase();
+  if (new RegExp(`\\b${name.toLowerCase()}\\b`).test(hay)) return null; // thread involves them
+  const contact = contactByName(tenantId, name);
+  if (contact && row.from_addr.toLowerCase().includes(contact.email)) return null;
+  return (
+    `Hold on: that reply is written for ${name}, but the thread I was about to put it on is from ` +
+    `${row.from_addr.replace("@", " at ")}, subject "${row.subject.slice(0, 50)}". That looks like the wrong thread, ` +
+    `so I haven't staged anything. Which email should this reply go on?`
+  );
+}
+
 // Speak an address the way a careful human confirms one: the local part
 // letter by letter, symbols named, the domain in words. "metapd@gmail.com"
 // becomes "m, e, t, a, p, d, at gmail dot com".
@@ -251,6 +277,7 @@ function actionLabel(a: Action): string {
     case "draft_reply": return `Drafting a reply`;
     case "forward_email": return `Forwarding email to ${a.to}`;
     case "archive_email": return `Archiving email in Gmail`;
+    case "archive_emails": return `Archiving ${(a.email_ids ?? []).length} emails in Gmail`;
     case "archive_newsletters": return `Sweeping newsletters to archive`;
     case "categorize_email": return `Filing as ${a.category?.replace(/_/g, " ")}`;
     case "add_task": return `Adding task`;
@@ -290,6 +317,10 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!dictated && row.sent_at) return "That draft already went out earlier. Tell me what the new reply should say and I'll send it.";
       const body = dictated || (row.draft_reply ?? "").trim();
       if (!body) return "There's no draft on that email yet. Tell me what to say, or ask me to draft one.";
+      // Sentinel runs at send time too, so a draft mis-staged before the
+      // guard existed still cannot leave for the wrong thread.
+      const mismatch = replyThreadMismatch(tenantId, body, row);
+      if (mismatch) return mismatch;
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
       if (duplicateSend(`${tenantId}:reply:${row.id}`))
         return "I just sent a reply on that thread moments ago, so I held this one to avoid a duplicate. If you really want another, give it a minute and ask again.";
@@ -395,6 +426,8 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!row) return "I couldn't find that email, so nothing was staged.";
       const body = (a.body ?? "").trim();
       if (!body) return "I didn't catch what the reply should say, so nothing was staged.";
+      const mismatch = replyThreadMismatch(tenantId, body, row);
+      if (mismatch) return mismatch;
       updateEmail(row.id, { draft_reply: body, draft_confident: 1, status: "drafted", sent_at: null });
       publishUiContext(tenantId, "inbox", {
         ...row,
@@ -439,6 +472,20 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       return res.archived === 1
         ? "Done, it's archived out of your Gmail inbox."
         : "That one isn't in your Gmail inbox anymore, so there was nothing to archive.";
+    }
+    if (a.type === "archive_emails") {
+      const ids = (a.email_ids ?? []).filter((n) => Number.isInteger(n));
+      if (!ids.length) return "I didn't catch which emails to archive, so nothing was touched.";
+      const known = db
+        .prepare(`SELECT COUNT(*) c FROM inbound_emails WHERE tenant_id = ? AND id IN (${ids.map(() => "?").join(",")})`)
+        .get(tenantId, ...ids) as { c: number };
+      if (known.c !== ids.length) return "One of those emails doesn't exist, so I archived nothing. Ask me about the inbox and try again.";
+      const res = await applyCleanup(tenantId, ids);
+      publishUiContext(tenantId, "inbox", null);
+      const missing = res.missing ? ` ${res.missing} ${res.missing === 1 ? "was" : "were"} already out of the inbox.` : "";
+      return res.archived
+        ? `Done. I archived ${res.archived} email${res.archived === 1 ? "" : "s"} in Gmail.${missing}`
+        : `I didn't archive anything.${missing || " Those weren't in your Gmail inbox."}`;
     }
     if (a.type === "archive_newsletters") {
       const ids = previewCleanup(tenantId).map((i) => i.id);
@@ -669,6 +716,12 @@ function lexiconFor(tenantId: string): Lexicon {
 // so the lexicon should refresh on the next turn.
 function invalidateLexicon(tenantId: string): void {
   lexCache.delete(tenantId);
+}
+
+// Watchdog remediation: dump every cached lexicon and routed intent so the
+// next turn rebuilds context from the ground truth in the database.
+export function clearVoiceCaches(): void {
+  lexCache.clear();
 }
 
 function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): Intent {

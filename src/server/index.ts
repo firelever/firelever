@@ -24,6 +24,8 @@ import { listItems, createItem, updateItem, deleteItem } from "../workspace/stor
 import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { buildGreeting } from "./greeting.js";
 import { logTurn } from "./chatlog.js";
+import { watchdogNote, watchdogHealth, registerRemedy } from "./watchdog.js";
+import { clearVoiceCaches } from "../rag/answer-voice.js";
 import { proposeRedlines } from "../rag/redlines.js";
 import { voiceConfigured, transcribe, synthesize } from "./voice.js";
 import { rateCheck, MAX_UPLOAD_BYTES } from "./limits.js";
@@ -38,7 +40,8 @@ type Env = { Variables: { tenant: Tenant } };
 const app = new Hono<Env>();
 
 // ---------- UI + health (no auth) ----------
-app.get("/api/health", (c) => c.json({ ok: true }));
+app.get("/api/health", (c) => c.json({ ok: true, ...watchdogHealth() }));
+registerRemedy(clearVoiceCaches);
 
 // Levi built assets (JS/CSS/images) — served if the build exists.
 const leviIndex = fs.existsSync(path.join(LEVI_DIR, "index.html"));
@@ -535,12 +538,13 @@ const chatCompletions = async (c: any) => {
       }
     } catch (e) {
       console.error("[convai] stream failed:", e instanceof Error ? e.message : e);
+      watchdogNote("stream_failure", e instanceof Error ? e.message : String(e));
       await s.write(frame({ content: "Sorry, I hit a problem pulling that up. Try again." }));
       spoke = true;
     }
     if (question && full.trim()) logTurn(tenantId, question, full);
     if (!spoke) {
-      console.warn("[convai] empty turn for question:", question.slice(0, 80));
+      watchdogNote("empty_turn", question.slice(0, 80));
       await s.write(frame({ content: "Sorry, I lost my train of thought there. Could you ask me that again?" }));
     }
     await s.write(frame({}, "stop"));
