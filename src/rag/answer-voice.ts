@@ -913,7 +913,10 @@ export async function streamVoiceReply(
     // list request and must not pin anything (it once pinned a receipt while
     // Levi described the whole inbox).
     const wantsLatest = /\b(?:last|latest|newest|most recent)\s+(?:e-?mail|message|one)\b/.test(question.toLowerCase());
-    const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? drafted.find((r) => r.status === "drafted") ?? null;
+    // The pending-draft fallback only fires when the user is actually asking
+    // about drafts/replies — a generic inbox question must not pin it.
+    const asksDraft = /\b(drafts?|repl(y|ies)|staged|approve|approval)\b/i.test(question);
+    const focus = (wantsLatest ? rows[0] : null) ?? matches[0] ?? (asksDraft ? drafted.find((r) => r.status === "drafted") : null) ?? null;
     publishUiEvent(tenantId, { kind: "search", state: "ok", label: "Scanning inbox", n: rows.length });
     if (focus) publishUiEvent(tenantId, { kind: "note", label: `Focused: "${focus.subject.slice(0, 40)}"` });
     publishUiContext(
