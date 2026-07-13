@@ -29,13 +29,16 @@ export function previewCleanup(tenantId: string): CleanupItem[] {
 
 async function gmailClient() {
   const { ImapFlow } = await import("imapflow");
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: "imap.gmail.com",
     port: 993,
     secure: true,
     auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
     logger: false,
   });
+  // Unhandled 'error' events on ImapFlow crash the process — always listen.
+  client.on("error", (e: any) => console.error("[cleanup] imap error:", e?.message ?? e));
+  return client;
 }
 
 // Map every message currently in INBOX by Message-ID, in one fetch. Per-message

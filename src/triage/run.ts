@@ -116,6 +116,7 @@ export async function fetchImapUnseen(): Promise<RawEmail[]> {
     auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
     logger: false,
   });
+  client.on("error", (e: any) => console.error("[triage] imap error:", e?.message ?? e));
   const out: RawEmail[] = [];
   await client.connect();
   const lock = await client.getMailboxLock("INBOX");
@@ -175,6 +176,9 @@ export async function backfillAttachments(tenantId: string): Promise<number> {
     auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
     logger: false,
   });
+  // An ImapFlow 'error' event with no listener crashes the whole Node
+  // process (took the server down on 2026-07-13); never leave one unhandled.
+  client.on("error", (e: any) => console.error("[backfill] imap error:", e?.message ?? e));
   let ingested = 0;
   await client.connect();
   // All Mail sees archived messages too; map the recent tail by Message-ID.

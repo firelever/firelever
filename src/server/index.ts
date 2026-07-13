@@ -36,6 +36,13 @@ const CLASSIC_UI = path.join(ROOT, "web", "index.html");
 const LEVI_DIR = path.join(ROOT, "web-dist"); // built Levi frontend (Vite)
 const PORT = Number(process.env.PORT ?? 8787);
 
+// Last-resort guards: a stray library event (an 'error' with no listener, an
+// unawaited rejection deep in a dependency) must never take the whole voice
+// server down — exactly that crashlooped the machine on 2026-07-13 when an
+// ImapFlow instance emitted 'error' after logout. Log loud, stay alive.
+process.on("uncaughtException", (e: any) => console.error("[fatal-guard] uncaughtException:", e?.message ?? e));
+process.on("unhandledRejection", (e: any) => console.error("[fatal-guard] unhandledRejection:", e?.message ?? e));
+
 type Env = { Variables: { tenant: Tenant } };
 const app = new Hono<Env>();
 
