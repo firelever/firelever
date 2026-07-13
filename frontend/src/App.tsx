@@ -366,6 +366,13 @@ export function App() {
   const scanning = activity.some(
     (e) => e.kind === "search" && e.state === "run" && nowMs - e.at < 3000 && !activity.some((r) => r.id > e.id && (r.kind === "sources" || r.kind === "result"))
   );
+  // A document mid-scan: the newest ingest "run" with no later ingest event
+  // (ingestion is sequential) shows as a scanning bar in the inbox window.
+  const ingRun = [...activity].reverse().find((e) => e.kind === "ingest" && e.state === "run");
+  const scanningDoc =
+    ingRun && !activity.some((e) => e.id > ingRun.id && e.kind === "ingest") && nowMs - ingRun.at < 5 * 60_000
+      ? ingRun.label.replace(/^Reading /, "")
+      : null;
   const lastAction = [...activity].reverse().find((e) => e.kind === "action" && e.state === "run");
   const acting = !!lastAction && nowMs - lastAction.at < 6000 && !activity.some((r) => r.id > lastAction.id && r.kind === "result");
   const evGlyph = (e: UiEvent) =>
@@ -400,6 +407,13 @@ export function App() {
       );
     }
     if (id === "inbox") {
+      const scanBar = scanningDoc && (
+        <div className="ingestbar">
+          <span className="lab">SCANNING</span>
+          <span className="fname">{scanningDoc}</span>
+          <div className="bar"><div className="fill" /></div>
+        </div>
+      );
       const d = queue[0];
       // Skip the focused email when it's the same one awaiting approval below.
       const fe = focusEmail && (!d || focusEmail.id !== d.id) ? focusEmail : null;
@@ -407,13 +421,15 @@ export function App() {
       // ("Inbox clear" while Levi narrates five emails read as broken.)
       if (!fe && !d) {
         if (inboxRecent.length === 0)
-          return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>Inbox clear — Levi will draft replies as mail arrives.</div>;
+          return <div style={{ color: "var(--mut2)", fontSize: 13, paddingTop: 8 }}>{scanBar}Inbox clear — Levi will draft replies as mail arrives.</div>;
         return (
           <div>
+            {scanBar}
             {inboxRecent.map((e) => (
               <div key={e.id} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "7px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
                 <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.subject}</span>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--mut2)", flex: "none", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis" }}>{e.from_addr.replace(/@.*/, "@…")}</span>
+                {e.attachments?.length ? <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--accM)", flex: "none" }}>▤ {e.attachments.length} DOC{e.attachments.length === 1 ? "" : "S"}</span> : null}
                 {e.needs_reply ? <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--warn)", flex: "none" }}>REPLY</span> : e.category === "newsletter_spam" ? <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--mut2)", flex: "none" }}>PROMO</span> : null}
               </div>
             ))}
@@ -423,6 +439,7 @@ export function App() {
       }
       return (
         <div>
+          {scanBar}
           {fe && (
             <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(var(--s5),0.5)", marginBottom: 10, border: fe.status === "compose" && !fe.sent_at ? "1px solid rgba(var(--accRGB),0.35)" : "none" }}>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>{fe.subject}</div>
@@ -430,6 +447,13 @@ export function App() {
                 {fe.status === "compose" ? <><span style={{ color: "var(--lab)" }}>NEW EMAIL</span> · to {fe.from_addr}</> : <>from {fe.from_addr}{fe.received_at ? " · " + fe.received_at.slice(0, 10) : ""}</>}
                 {fe.sent_at ? <span style={{ color: "var(--ok)" }}> · {fe.status === "compose" ? "SENT" : "REPLIED"} {fe.sent_at.slice(0, 10)}</span> : null}
               </div>
+              {fe.attachments && fe.attachments.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {fe.attachments.map((a) => (
+                    <span key={a} className="docchip"><Icon.file size={10} /> {a}</span>
+                  ))}
+                </div>
+              )}
               {fe.body && <div style={{ fontSize: 12.5, color: "var(--mut)", lineHeight: 1.55, maxHeight: 150, overflowY: "auto" }}>{fe.body}</div>}
               {fe.draft_reply && !fe.sent_at && (
                 <div style={{ marginTop: fe.body ? 8 : 0, paddingTop: fe.body ? 8 : 0, borderTop: fe.body ? "1px solid rgba(var(--lineRGB),0.12)" : "none", fontSize: 12, color: fe.status === "compose" ? "var(--mut)" : "var(--mut2)", lineHeight: 1.5, maxHeight: fe.status === "compose" ? 150 : 76, overflow: fe.status === "compose" ? "auto" : "hidden" }}>

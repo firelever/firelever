@@ -15,6 +15,7 @@ export interface UiEmail {
   draft_reply: string | null;
   status: string;
   sent_at: string | null;
+  attachments?: string[]; // document filenames riding on this email
 }
 
 // A live activity event: one real step the brain took this turn (routed the

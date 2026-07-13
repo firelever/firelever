@@ -261,3 +261,23 @@ body {
   .chip { flex: none; white-space: nowrap; }
   .promptbar { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
 }
+
+/* ---- attachments as first-class citizens ---- */
+.docchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.02em;
+  padding: 3px 8px; border-radius: 7px; color: var(--accL);
+  background: rgba(var(--accRGB), 0.09); border: 1px solid rgba(var(--accRGB), 0.22);
+}
+/* Indeterminate scanning bar: shown in the inbox window while a document is
+   being read/OCR'd into the knowledge base. */
+.ingestbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 10px; margin-bottom: 10px;
+  background: rgba(var(--accRGB), 0.07); border: 1px solid rgba(var(--accRGB), 0.2);
+}
+.ingestbar .lab { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; color: var(--acc); flex: none; }
+.ingestbar .fname { font-family: var(--mono); font-size: 10.5px; color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ingestbar .bar { flex: 1; min-width: 60px; height: 4px; border-radius: 3px; background: rgba(var(--lineRGB), 0.12); overflow: hidden; }
+.ingestbar .fill { width: 32%; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--acc), var(--acc2)); animation: scanSlide 1.3s ease-in-out infinite; }
+@keyframes scanSlide { 0% { transform: translateX(-110%); } 100% { transform: translateX(320%); } }

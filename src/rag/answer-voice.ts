@@ -131,6 +131,17 @@ const CTX =
   "(what's in the inbox, what needs replies, what to clean up), do NOT pin any single one — the screen shows " +
   "the inbox list, which is right for an overview.";
 
+// Attached-document names ride along everywhere an email is shown or given
+// to the model: attachments are the core artifact, never a footnote.
+const attachmentsOf = (json: string | null | undefined): string[] | undefined => {
+  try {
+    const a = JSON.parse(json ?? "null");
+    return Array.isArray(a) && a.length ? a : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 // Email bodies get shown in the UI and read aloud; angle-bracketed and long
 // tracking URLs (newsletter plumbing) are pure noise in both registers.
 const cleanBody = (s: string) =>
@@ -884,7 +895,7 @@ export async function streamVoiceReply(
   } else if (intent === "inbox") {
     const rows = db
       .prepare(
-        `SELECT id, from_addr, subject, body, draft_reply, category, urgency, needs_reply, status, sent_at, received_at
+        `SELECT id, from_addr, subject, body, draft_reply, category, urgency, needs_reply, status, sent_at, received_at, attachments_json
          FROM inbound_emails WHERE tenant_id = ? ORDER BY id DESC LIMIT 200`
       )
       .all(tenantId) as {
@@ -899,12 +910,14 @@ export async function streamVoiceReply(
       status: string;
       sent_at: string | null;
       received_at: string | null;
+      attachments_json: string | null;
     }[];
     const table = rows
       .map(
         (r) =>
           `[${r.id}] ${r.received_at?.slice(0, 10) ?? "?"} | ${r.from_addr} | "${r.subject}" | ${r.category ?? "?"} | ` +
-          `urgency ${r.urgency ?? "?"} | needs_reply ${r.needs_reply ? "yes" : "no"} | ${r.status}`
+          `urgency ${r.urgency ?? "?"} | needs_reply ${r.needs_reply ? "yes" : "no"} | ${r.status}` +
+          (attachmentsOf(r.attachments_json) ? ` | DOCS ATTACHED: ${attachmentsOf(r.attachments_json)!.join(", ")}` : "")
       )
       .join("\n");
     // Full content for the emails the user is most likely asking about, so
@@ -998,6 +1011,7 @@ export async function streamVoiceReply(
             draft_reply: focus.draft_reply,
             status: focus.status,
             sent_at: focus.sent_at,
+            attachments: attachmentsOf(focus.attachments_json),
           }
         : null
     );
@@ -1005,6 +1019,9 @@ export async function streamVoiceReply(
       .map(
         (r) =>
           `[${r.id}] From: ${r.from_addr} | Subject: "${r.subject}" | ${r.received_at?.slice(0, 10) ?? "?"}\n` +
+          (attachmentsOf(r.attachments_json)
+            ? `ATTACHED DOCUMENTS (already scanned into the knowledge base, searchable): ${attachmentsOf(r.attachments_json)!.join(", ")}\n`
+            : "") +
           `Body: ${clean(r.body).slice(0, 700) || "(empty)"}` +
           (r.draft_reply
             ? `\nLevi's drafted reply (${
@@ -1019,6 +1036,9 @@ export async function streamVoiceReply(
       .join("\n\n");
     system =
       "You are Levi, answering out loud about the user's email inbox using ONLY the data provided. " +
+      "ATTACHED DOCUMENTS are the core of this platform, never a footnote: whenever you mention or summarize an " +
+      "email that has DOCS ATTACHED, say so unprompted, name the documents, note that they are already scanned " +
+      "and searchable, and offer to walk through them. " +
       "The table lists every email; full content follows for the recent and relevant ones. When asked to read " +
       "an email, read its body naturally, summarizing boilerplate. Some emails have a drafted reply awaiting " +
       "approval in the Inbox window; mention that when relevant. A reply left the building ONLY if it is " +
@@ -1205,11 +1225,16 @@ export async function streamVoiceReply(
           // never put an email on screen.
           const row = db
             .prepare(
-              `SELECT id, from_addr, subject, body, received_at, draft_reply, status, sent_at FROM inbound_emails
+              `SELECT id, from_addr, subject, body, received_at, draft_reply, status, sent_at, attachments_json FROM inbound_emails
                WHERE id = ? AND tenant_id = ?`
             )
-            .get(c.email_id, tenantId) as UiEmail | undefined;
-          if (row) publishUiContext(tenantId, "inbox", { ...row, body: cleanBody(row.body).slice(0, 1200) });
+            .get(c.email_id, tenantId) as (UiEmail & { attachments_json: string | null }) | undefined;
+          if (row)
+            publishUiContext(tenantId, "inbox", {
+              ...row,
+              body: cleanBody(row.body).slice(0, 1200),
+              attachments: attachmentsOf(row.attachments_json),
+            });
         } else if (c.window && WINDOWS.includes(c.window)) {
           publishUiContext(tenantId, c.window);
         }

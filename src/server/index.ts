@@ -383,12 +383,19 @@ app.post("/api/voice", limited("ask"), async (c) => {
 app.get("/api/inbox/recent", (c) => {
   const rows = db
     .prepare(
-      `SELECT id, from_addr, subject, category, status, needs_reply, received_at
+      `SELECT id, from_addr, subject, category, status, needs_reply, received_at, attachments_json
        FROM inbound_emails WHERE tenant_id = ?
        AND status NOT IN ('archived', 'archive_missing')
        ORDER BY id DESC LIMIT 8`
     )
-    .all(c.get("tenant").id);
+    .all(c.get("tenant").id) as any[];
+  for (const r of rows) {
+    try {
+      const a = JSON.parse(r.attachments_json ?? "null");
+      r.attachments = Array.isArray(a) && a.length ? a : undefined;
+    } catch { /* leave undefined */ }
+    delete r.attachments_json;
+  }
   return c.json({ emails: rows });
 });
 
