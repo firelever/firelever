@@ -22,9 +22,12 @@ ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# Bake the embedding model into the image at build time — no runtime download,
-# deterministic cold starts, works even if HuggingFace is unreachable.
+# Bake the embedding model into the image from the BUILD CONTEXT — HuggingFace
+# began returning 403 to anonymous file downloads (2026-07-13, broke deploys),
+# so the model ships alongside the checkout (models/, gitignored but inside
+# the Docker context). The prefetch script then just validates the cache.
 ENV TRANSFORMERS_CACHE=/app/models
+COPY models /app/models
 RUN npx tsx scripts/prefetch-model.mjs
 
 CMD ["npx", "tsx", "src/server/index.ts"]
