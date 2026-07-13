@@ -13,7 +13,7 @@ export interface WindowDef {
 
 export const WINDOWS: WindowDef[] = [
   { id: "answer", label: "DOCS · ANSWER", dockLabel: "Answer", icon: "file", tier: "real", meta: "SOURCED" },
-  { id: "inbox", label: "INBOX · DRAFTED REPLIES", dockLabel: "Replies", icon: "mail", tier: "real" },
+  { id: "inbox", label: "INBOX · MAIL", dockLabel: "Inbox", icon: "mail", tier: "real" },
   { id: "schedule", label: "TODAY · SCHEDULE", dockLabel: "Schedule", icon: "calendar", tier: "real" },
   { id: "tasks", label: "TASKS", dockLabel: "Tasks", icon: "check", tier: "real" },
   { id: "notes", label: "NOTES · MEETING PREP", dockLabel: "Prep", icon: "note", tier: "real" },

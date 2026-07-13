@@ -25,9 +25,11 @@ export interface RawEmail {
   attachments: Attachment[];
 }
 
-// Only pull documents from genuine correspondence — never from bulk/spam senders,
-// so marketing PDFs don't pollute the knowledge base.
-const ATTACH_CATEGORIES = new Set(["new_business", "support", "vendor_partner"]);
+// Documents arrive attached to all kinds of mail — the user forwarding a
+// settlement statement to their own inbox classifies as "other", and gating
+// on business categories silently skipped it (live miss, 2026-07-13). Only
+// bulk/spam senders are excluded, so marketing PDFs don't pollute the KB.
+const ATTACH_SKIP_CATEGORIES = new Set(["newsletter_spam"]);
 const ATTACH_MAX_BYTES = 30 * 1024 * 1024;
 
 // Ingest an email's document attachments into the knowledge base, tagged with
@@ -38,7 +40,7 @@ async function ingestAttachments(
   email: RawEmail,
   category: string
 ): Promise<string[]> {
-  if (!ATTACH_CATEGORIES.has(category) || email.attachments.length === 0) return [];
+  if (ATTACH_SKIP_CATEGORIES.has(category) || email.attachments.length === 0) return [];
   const domain = email.from_addr.split("@")[1] ?? "unknown";
   const preamble =
     `[Received via email]\n` +
@@ -144,6 +146,79 @@ export async function fetchImapUnseen(): Promise<RawEmail[]> {
     await client.logout();
   }
   return out;
+}
+
+// Backfill: re-fetch recent already-triaged emails from Gmail and ingest any
+// document attachments that were skipped (by the old category gate, an
+// outage, or a crash mid-triage). Runs once at server boot; attachments_json
+// doubles as the "scanned" marker so each email is fetched at most once.
+export async function backfillAttachments(tenantId: string): Promise<number> {
+  const { GMAIL_USER, GMAIL_APP_PASSWORD } = await import("../config.js");
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) return 0;
+  const db = (await import("../rag/store.js")).default;
+  const rows = db
+    .prepare(
+      `SELECT id, message_id, category FROM inbound_emails
+       WHERE tenant_id = ? AND message_id IS NOT NULL AND attachments_json IS NULL
+         AND COALESCE(category, 'other') NOT IN ('newsletter_spam')
+       ORDER BY id DESC LIMIT 40`
+    )
+    .all(tenantId) as { id: number; message_id: string; category: string | null }[];
+  if (!rows.length) return 0;
+
+  const { ImapFlow } = await import("imapflow");
+  const { simpleParser } = await import("mailparser");
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    logger: false,
+  });
+  let ingested = 0;
+  await client.connect();
+  // All Mail sees archived messages too; map the recent tail by Message-ID.
+  const lock = await client.getMailboxLock("[Gmail]/All Mail");
+  try {
+    const st = await client.status("[Gmail]/All Mail", { messages: true });
+    const from = Math.max(1, (st.messages ?? 1) - 300);
+    const byMid = new Map<string, number>();
+    for await (const m of client.fetch(`${from}:*`, { envelope: true, uid: true })) {
+      if (m.envelope?.messageId) byMid.set(m.envelope.messageId, m.uid);
+    }
+    for (const r of rows) {
+      const uid = byMid.get(r.message_id);
+      if (uid === undefined) continue; // older than the tail; next boot won't retry it forever
+      try {
+        const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+        if (!msg || !msg.source) continue;
+        const parsed = await simpleParser(msg.source);
+        const raw: RawEmail = {
+          message_id: r.message_id,
+          from_addr: parsed.from?.value?.[0]?.address ?? "unknown@unknown",
+          subject: parsed.subject ?? "(no subject)",
+          body: (parsed.text ?? "").slice(0, 8000),
+          received_at: parsed.date?.toISOString() ?? null,
+          attachments: (parsed.attachments ?? [])
+            .filter((a) => a.filename)
+            .map((a) => ({ filename: a.filename as string, content: a.content })),
+        };
+        const added = await ingestAttachments(tenantId, raw, r.category ?? "other");
+        updateEmail(r.id, { attachments_ingested: added.length, attachments_json: JSON.stringify(added) });
+        if (added.length) {
+          ingested += added.length;
+          console.log(`[backfill] ${added.length} attachment(s) from "${raw.subject.slice(0, 50)}": ${added.join(", ")}`);
+        }
+      } catch (e) {
+        console.error(`[backfill] email ${r.id} failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  } finally {
+    lock.release();
+    await client.logout();
+  }
+  if (ingested) console.log(`[backfill] done: ${ingested} attachment(s) added to the knowledge base`);
+  return ingested;
 }
 
 // Process a batch of emails: dedup-insert, classify, draft, ingest attachments.

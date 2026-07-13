@@ -98,7 +98,7 @@ const ACTIONS =
   'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones; if you have NOT seen a schedule listing this conversation, pass "match":"words from the event title" instead of an id and the system finds it. ' +
   '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
-  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Replies window, notes is Prep). ' +
+  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Inbox window, notes is Prep). ' +
   '<<action:{"type":"set_theme","theme":"ember|graphite|nebula|signal|ivory"}>> switches the color theme when asked. ' +
   '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
   "(a name, a spelling, a number, a preference); the note should state the correct fact and the wrong variant, " +
@@ -1011,7 +1011,7 @@ export async function streamVoiceReply(
                 r.sent_at
                   ? `SENT on ${r.sent_at.slice(0, 10)}`
                   : r.status === "drafted"
-                    ? "awaiting approval in the Replies window"
+                    ? "awaiting approval in the Inbox window"
                     : `verdict ${r.status} but NOT sent — never claim it was sent`
               }): ${clean(r.draft_reply).slice(0, 400)}`
             : "")
@@ -1021,7 +1021,7 @@ export async function streamVoiceReply(
       "You are Levi, answering out loud about the user's email inbox using ONLY the data provided. " +
       "The table lists every email; full content follows for the recent and relevant ones. When asked to read " +
       "an email, read its body naturally, summarizing boilerplate. Some emails have a drafted reply awaiting " +
-      "approval in the Replies window; mention that when relevant. A reply left the building ONLY if it is " +
+      "approval in the Inbox window; mention that when relevant. A reply left the building ONLY if it is " +
       "marked SENT with a date; a verdict of approved does not mean it was sent, so never claim or imply an " +
       "unsent reply went out. If asked about an email whose body isn't included, say you can pull it up if " +
       "they name the sender. " +

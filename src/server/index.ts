@@ -586,4 +586,9 @@ if (process.env.WATCH_INBOX !== "0") {
   import("../triage/watcher.js")
     .then(({ startInboxWatcher }) => startInboxWatcher("firelever"))
     .catch((e) => console.error("[watcher] failed to start:", e));
+  // One-shot sweep for document attachments that earlier triage runs skipped
+  // (old category gate, crashes) — new mail is handled inline by the watcher.
+  import("../triage/run.js")
+    .then(({ backfillAttachments }) => backfillAttachments("firelever"))
+    .catch((e) => console.error("[backfill] failed:", e));
 }
