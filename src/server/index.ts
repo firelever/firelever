@@ -262,7 +262,17 @@ app.post("/api/triage/:id/verdict", async (c) => {
       return c.json({ error: "sending the reply failed; verdict not recorded" }, 502);
     }
   }
-  updateEmail(id, sent ? { status: verdict, sent_at: new Date().toISOString() } : { status: verdict });
+  // A rejected draft is dead: clear it so it can never resurface in Levi's
+  // context ("there's a drafted reply sitting on this one" about a draft the
+  // user already killed reads as confusion).
+  updateEmail(
+    id,
+    sent
+      ? { status: verdict, sent_at: new Date().toISOString() }
+      : verdict === "rejected"
+        ? { status: verdict, draft_reply: null }
+        : { status: verdict }
+  );
   return c.json({ ok: true, status: verdict, sent });
 });
 

@@ -914,7 +914,8 @@ export async function streamVoiceReply(
     }[];
     const table = rows
       .map(
-        (r) =>
+        (r, i) =>
+          (i === 0 ? "<- MOST RECENT: " : "") +
           `[${r.id}] ${r.received_at?.slice(0, 10) ?? "?"} | ${r.from_addr} | "${r.subject}" | ${r.category ?? "?"} | ` +
           `urgency ${r.urgency ?? "?"} | needs_reply ${r.needs_reply ? "yes" : "no"} | ${r.status}` +
           (attachmentsOf(r.attachments_json) ? ` | DOCS ATTACHED: ${attachmentsOf(r.attachments_json)!.join(", ")}` : "")
@@ -984,7 +985,7 @@ export async function streamVoiceReply(
       (top.hits.length >= 2 ||
         top.hits.some((w) => wordHit((top.r.from_addr + " " + top.r.subject).toLowerCase(), w)) ||
         top.hits.some((w) => contactByName(tenantId, w) !== null)); // known people are entities wherever they appear
-    const drafted = rows.filter((r) => r.draft_reply);
+    const drafted = rows.filter((r) => r.draft_reply && r.status !== "rejected");
     // Surface the email under discussion, content included. "The latest email"
     // is an explicit recency reference; otherwise only a real entity match or
     // a pending draft may focus — never a silent most-recent fallback.
@@ -1050,7 +1051,7 @@ export async function streamVoiceReply(
       CTX +
       MEM;
     userContent = rows.length
-      ? `${convoBlock}${dateBlock}Inbox (${rows.length} emails):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
+      ? `${convoBlock}${dateBlock}Inbox (${rows.length} emails, NEWEST FIRST — the FIRST row is the most recent; "the last/latest email" always means the FIRST row, never the bottom of the list):\n${table}\n\nFull content of recent/relevant emails:\n${detail}\n\nQuestion: ${question}`
       : `${convoBlock}${dateBlock}The inbox is empty.\n\nQuestion: ${question}`;
   } else {
     publishUiContext(tenantId, "answer", null); // docs turn: no email belongs on screen
