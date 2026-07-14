@@ -78,7 +78,7 @@ const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract", "l
 const THEMES = ["ember", "graphite", "nebula", "signal", "ivory"];
 
 const ACTIONS =
-  " ACTIONS: When the user asks you to DO one of these things, begin your reply with exactly one action tag, then the spoken confirmation: " +
+  " ACTIONS: When the user asks you to DO one of these things, your reply MUST START with the action tag — the very first characters, before any words; never narrate a plan and put the tag at the end (the action runs the moment the tag arrives, and text before it gets spoken as-is): " +
   "REPLY FLOW — replies are previewed before they leave: when the user dictates or requests a reply, stage it first with " +
   '<<action:{"type":"stage_reply","email_id":ID,"body":"the full reply, plain and warm, signed Peter"}>> — it appears on screen — then briefly say what it says and ask if you should send it. ' +
   'When they confirm (or say send the draft), <<action:{"type":"send_reply","email_id":ID}>> sends the staged/unsent draft. Never send dictated content without staging it for review first. ' +
@@ -172,7 +172,7 @@ function duplicateSend(key: string, ttlMs = 120_000): boolean {
 // Staged new emails (compose preview parity with replies): compose_email
 // stages here and on screen; only a confirmed send_email actually sends.
 // Sent this way, nothing outbound ever skips the preview.
-const stagedComposes = new Map<string, { to: string; subject: string; body: string; at: number; contactName?: string }>();
+const stagedComposes = new Map<string, { to: string; subject: string; body: string; at: number; contactName?: string; sentAt?: number }>();
 const STAGED_TTL_MS = 15 * 60 * 1000;
 
 // Every branch tells the model what day it is — in the calendar's timezone
@@ -377,6 +377,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "send_email") {
       const staged = stagedComposes.get(tenantId);
+      // At-least-once turn delivery: the duplicate generation arrives after
+      // the first one already sent. Echo the same truthful confirmation
+      // instead of "there's no staged email" (which reads as amnesia).
+      if (staged?.sentAt && Date.now() - staged.sentAt < 120_000)
+        return `Sent. "${staged.subject}" is on its way to ${staged.to.replace("@", " at ")}.`;
       if (!staged || Date.now() - staged.at > STAGED_TTL_MS)
         return "There's no staged email waiting. Tell me who it's for and what it should say, and I'll stage it for review.";
       if (!replySendingConfigured()) return "Email sending isn't configured on the server, so nothing was sent.";
@@ -386,7 +391,7 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       // The user approved this address for this person: remember it, so next
       // time Levi proposes it and catches near-miss dictations.
       if (staged.contactName) upsertContact(tenantId, staged.contactName, staged.to);
-      stagedComposes.delete(tenantId);
+      staged.sentAt = Date.now(); // kept briefly so a duplicate turn echoes "Sent"
       publishUiContext(tenantId, "inbox", {
         id: -1,
         from_addr: staged.to,
@@ -1228,7 +1233,6 @@ export async function streamVoiceReply(
     });
 
     const HEADS = ["<<action:", "<<ctx:"];
-    let mode: "detect" | "collect" | "pass" = "detect";
     let buf = "";
     let tagsSeen = 0;
 
@@ -1303,56 +1307,76 @@ export async function streamVoiceReply(
       return "go";
     };
 
+    // Tags are extracted ANYWHERE in the stream, not just at the reply head:
+    // the protocol says tag-first, but the model sometimes narrates its plan
+    // and appends the tag at the end — that once streamed a raw
+    // <<action:...>> into the transcript, the TTS read code aloud, and the
+    // action never executed. Now a tag mid-stream is executed and never
+    // spoken; the text around it flows through untouched.
+    const longestHeadTail = (): number => {
+      const max = Math.min(buf.length, HEADS[0].length - 1);
+      for (let L = max; L > 0; L--) {
+        const tail = buf.slice(buf.length - L);
+        if (HEADS.some((h) => h.startsWith(tail))) return L;
+      }
+      return 0;
+    };
+    let scanning = true; // after the tag budget is spent, pass text through raw
+
     const feed = async (t: string): Promise<"stop" | "go"> => {
-      if (mode === "pass") {
+      if (!scanning) {
         await emit(t);
         return "go";
       }
       buf += t;
-      // Loop: one delta can complete a tag AND begin the next (or the speech).
       for (;;) {
-        if (mode === "detect") {
-          const full = HEADS.find((h) => buf.startsWith(h));
-          if (full) {
-            mode = "collect";
-          } else if (HEADS.some((h) => h.startsWith(buf))) {
-            return "go"; // still a possible tag prefix; wait for more
-          } else {
-            mode = "pass";
-            const out = buf;
-            buf = "";
-            if (out) await emit(out);
-            return "go";
+        // earliest tag head anywhere in the buffer
+        let idx = -1;
+        let head: string | null = null;
+        for (const h of HEADS) {
+          const k = buf.indexOf(h);
+          if (k >= 0 && (idx < 0 || k < idx)) {
+            idx = k;
+            head = h;
           }
         }
-        // collect
-        const head = HEADS.find((h) => buf.startsWith(h))!;
+        if (head === null) {
+          // no full head — hold back a tail that could be the start of one
+          const hold = longestHeadTail();
+          const safe = buf.slice(0, buf.length - hold);
+          buf = buf.slice(buf.length - hold);
+          if (safe) await emit(safe);
+          return "go";
+        }
+        if (idx > 0) {
+          await emit(buf.slice(0, idx));
+          buf = buf.slice(idx);
+        }
         const end = buf.indexOf(">>");
         if (end < 0) {
           if (buf.length > 1500) {
             // runaway tag; bail out and just speak it
-            mode = "pass";
+            scanning = false;
             const out = buf;
             buf = "";
             await emit(out);
           }
-          return "go";
+          return "go"; // wait for the rest of the tag
         }
         const kind = head.slice(2, head.length - 1); // "action" | "ctx"
         const raw = buf.slice(head.length, end);
         buf = buf.slice(end + 2).replace(/^\s+/, "");
         tagsSeen++;
         if ((await handleTag(kind, raw)) === "stop") return "stop";
-        if (tagsSeen >= 2) {
-          mode = "pass";
+        if (tagsSeen >= 3) {
+          scanning = false;
           const out = buf;
           buf = "";
           if (out) await emit(out);
           return "go";
         }
-        mode = "detect";
+        // loop: buf may hold more text and/or another tag
         if (!buf) return "go";
-        // else: loop again — buf may already hold the next tag or the speech
       }
     };
 
@@ -1367,7 +1391,7 @@ export async function streamVoiceReply(
         return;
       }
     }
-    if (buf && (mode as string) !== "pass") await emit(buf); // stream ended mid-detect (mode mutates inside feed)
+    if (buf) await emit(buf); // stream ended with a held-back tail or partial tag
   };
 
   try {
