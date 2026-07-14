@@ -130,11 +130,14 @@ const CTX =
   "their documents but the provided sources do not contain the answer, do NOT give up: output ONLY " +
   '<<ctx:{"search":"a better search query naming the document and the thing sought"}>> and nothing else — the ' +
   "system searches again and redoes the turn (one retry; if the retried sources still lack it, say so plainly). " +
-  'Whenever your answer discusses ONE specific email from the list, you MUST start your reply with ' +
-  '<<ctx:{"email_id":ID}>> so the screen shows THAT email — every time, follow-ups included; the screen may ' +
-  "otherwise be showing a stale email from earlier. But when your answer is an OVERVIEW of several emails " +
-  "(what's in the inbox, what needs replies, what to clean up), do NOT pin any single one — the screen shows " +
-  "the inbox list, which is right for an overview.";
+  "THE SCREEN FOLLOWS YOUR NARRATION IN REAL TIME: place <<ctx:{\"email_id\":ID}>> at the exact point in your " +
+  "reply where you START discussing that email — mid-reply is right, the window transitions as you speak. When " +
+  "your answer discusses one specific email, pin it (every time, follow-ups included; the screen may otherwise " +
+  "show a stale email). When you give an OVERVIEW of several emails, begin with NO pin so the inbox list shows " +
+  "while you summarize — then, if you turn to one specific email partway through, drop its ctx tag right there " +
+  "and the screen transitions with you. Walking through several emails one by one? Pin each as you reach it. " +
+  'You can also switch windows mid-reply the same way with <<ctx:{"window":"schedule"}>> when your answer moves ' +
+  "to a different domain.";
 
 // Attached-document names ride along everywhere an email is shown or given
 // to the model: attachments are the core artifact, never a footnote.
@@ -1368,7 +1371,7 @@ export async function streamVoiceReply(
         buf = buf.slice(end + 2).replace(/^\s+/, "");
         tagsSeen++;
         if ((await handleTag(kind, raw)) === "stop") return "stop";
-        if (tagsSeen >= 3) {
+        if (tagsSeen >= 6) {
           scanning = false;
           const out = buf;
           buf = "";
