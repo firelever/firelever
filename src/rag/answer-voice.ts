@@ -22,7 +22,7 @@ import { updateEmail } from "../triage/store.js";
 import { sendReply, sendEmail, replySendingConfigured } from "../triage/send.js";
 import { draftReply as engineDraftReply, CATEGORIES } from "../triage/engine.js";
 import { previewCleanup, applyCleanup, labelInGmail } from "../triage/cleanup.js";
-import { publishUiContext, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
+import { publishUiContext, publishUiDocs, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import { upsertContact, contactByName, contactsBlock, isKnownAddress } from "./contacts.js";
 import db from "./store.js";
@@ -67,10 +67,11 @@ type Action =
   | { type: "cancel_event"; id?: string | number; match?: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
+  | { type: "show_documents"; match?: string }
   | { type: "show_window"; window: string }
   | { type: "set_theme"; theme: string };
 
-const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract"];
+const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract", "library"];
 const THEMES = ["ember", "graphite", "nebula", "signal", "ivory"];
 
 const ACTIONS =
@@ -98,7 +99,8 @@ const ACTIONS =
   'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones; if you have NOT seen a schedule listing this conversation, pass "match":"words from the event title" instead of an id and the system finds it. ' +
   '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
-  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Inbox window, notes is Prep). ' +
+  '<<action:{"type":"show_documents","match":"Ute Street"}>> pulls the document LIBRARY onto the screen — all documents when "match" is omitted, or only the documents whose CONTENT relates to the match phrase (use it when the user asks to see their documents, or everything about a property, deal, or person). ' +
+  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract|library"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Inbox window, notes is Prep, library is Documents). ' +
   '<<action:{"type":"set_theme","theme":"ember|graphite|nebula|signal|ivory"}>> switches the color theme when asked. ' +
   '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
   "(a name, a spelling, a number, a preference); the note should state the correct fact and the wrong variant, " +
@@ -303,6 +305,7 @@ function actionLabel(a: Action): string {
     case "cancel_event": return `Cancelling event`;
     case "complete_task": return `Checking off task`;
     case "remember": return `Saving to memory`;
+    case "show_documents": return a.match ? `Finding documents about ${a.match}` : `Opening the document library`;
     case "show_window": return `Opening ${a.window} window`;
     case "set_theme": return `Switching theme to ${a.theme}`;
     default: return "Working";
@@ -630,6 +633,50 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       if (!a.note?.trim()) return "I didn't catch what to remember, so nothing was saved.";
       addMemory(tenantId, a.note);
       return null;
+    }
+    if (a.type === "show_documents") {
+      const q = a.match?.trim();
+      let docs: { path: string; title: string | null; chunks: number; matched?: number }[];
+      if (q) {
+        // Content-based, not filename-based: "documents about Ute Street"
+        // must find the Title Commitment even though "Ute" isn't in its name.
+        const hits = await search(tenantId, q, 60, getEmbedder(), "hybrid").catch(() => []);
+        // Score-based relevance, not membership: on a small corpus every chunk
+        // comes back ranked, so "related" means scoring near the best hit —
+        // a document whose best passage is far below the top match is noise.
+        const best = hits[0]?.score ?? 0;
+        const byDoc = new Map<string, { n: number; top: number }>();
+        for (const h of hits) {
+          const cur = byDoc.get(h.document_path) ?? { n: 0, top: 0 };
+          byDoc.set(h.document_path, { n: cur.n + 1, top: Math.max(cur.top, h.score) });
+        }
+        const build = (minHits: number) =>
+          [...byDoc.entries()]
+            .filter(([, v]) => v.n >= minHits && v.top >= best * 0.5)
+            .map(([docPath, v]) => { const matched = v.n;
+              const row = db
+                .prepare(
+                  `SELECT d.title, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+                   WHERE d.tenant_id = ? AND d.path = ? GROUP BY d.id`
+                )
+                .get(tenantId, docPath) as { title: string | null; chunks: number } | undefined;
+              return { path: docPath, title: row?.title ?? null, chunks: row?.chunks ?? 0, matched };
+            })
+            .sort((x, y) => (y.matched ?? 0) - (x.matched ?? 0));
+        docs = build(2); // one stray passage is a coincidence, not a related document
+        if (!docs.length) docs = build(1);
+        if (!docs.length) return `I don't have any documents related to ${q}. Nothing was pulled up.`;
+      } else {
+        docs = db
+          .prepare(
+            `SELECT d.path, d.title, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+             WHERE d.tenant_id = ? GROUP BY d.id ORDER BY d.ingested_at DESC`
+          )
+          .all(tenantId) as { path: string; title: string | null; chunks: number }[];
+        if (!docs.length) return "There are no documents in the knowledge base yet. Forward or upload one and I'll scan it.";
+      }
+      publishUiDocs(tenantId, docs.slice(0, 12), q ?? null);
+      return `Pulled up ${docs.length} document${docs.length === 1 ? "" : "s"}${q ? ` related to ${q}` : ""}. They're on your screen.`;
     }
     if (a.type === "show_window") {
       if (!WINDOWS.includes(a.window)) return "I don't have a window by that name.";
@@ -1191,7 +1238,7 @@ export async function streamVoiceReply(
         // A returned sentence is the server's truth (a failure, or the real
         // counts for a bulk action); it replaces whatever the model was about
         // to claim. Whether it reads as success decides the feed color.
-        const failed = replace !== null && !/^(Done|Filed|Booked|Cancelled|Removed|Staged|Sent)/.test(replace);
+        const failed = replace !== null && !/^(Done|Filed|Booked|Cancelled|Removed|Staged|Sent|Pulled)/.test(replace);
         publishUiEvent(tenantId, {
           kind: "result",
           state: failed ? "fail" : "ok",

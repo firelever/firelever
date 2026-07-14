@@ -4,7 +4,7 @@ import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, InboxRow } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, UiDoc, InboxRow } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
 
@@ -37,6 +37,8 @@ export function App() {
   const [redlines, setRedlines] = useState<RedlineResult | null>(null);
   const [redlinesBusy, setRedlinesBusy] = useState(false);
   const [focusEmail, setFocusEmail] = useState<UiEmail | null>(null);
+  const [docsList, setDocsList] = useState<UiDoc[]>([]);
+  const [docsQuery, setDocsQuery] = useState<string | null>(null);
   // Live activity: the brain's real steps this conversation (routing decisions,
   // searches, executing actions with truthful results) plus spoken captions.
   const [activity, setActivity] = useState<UiEvent[]>([]);
@@ -191,6 +193,8 @@ export function App() {
     // Conversation boundary: reset the context bus and local state so the
     // windows can only ever reflect THIS conversation.
     setFocusEmail(null);
+    setDocsList([]);
+    setDocsQuery(null);
     setActivity([]);
     promote("answer");
     api.uiSessionStart().catch(() => {});
@@ -271,6 +275,7 @@ export function App() {
             if (fresh.some((e) => e.kind === "mail")) loadTriage();
           }
           if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
+          if (ctx.docs != null) { setDocsList(ctx.docs); setDocsQuery(ctx.docsQuery ?? null); }
           if (ctx.theme && (THEME_ORDER as readonly string[]).includes(ctx.theme)) setTheme(ctx.theme as ThemeName);
           if (ctx.window) {
             promote(ctx.window);
@@ -523,6 +528,29 @@ export function App() {
             <div key={n.id} style={{ fontSize: 14, padding: "7px 0", borderBottom: "1px dashed rgba(var(--lineRGB),0.1)" }}>{n.title}</div>
           ))}
           <input onKeyDown={(e) => e.key === "Enter" && addItem("note", (e.target as HTMLInputElement).value)} placeholder="Jot a note…" style={addInput} />
+        </div>
+      );
+    }
+    if (id === "library") {
+      if (!docsList.length)
+        return <div style={{ color: "var(--mut2)", fontSize: 13, lineHeight: 1.6, paddingTop: 8 }}>Ask Levi for documents — try "show me everything you have about Ute Street".</div>;
+      return (
+        <div>
+          {docsQuery && <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.08em", color: "var(--accM)", marginBottom: 10 }}>RELATED TO "{docsQuery.toUpperCase()}"</div>}
+          {docsList.map((d) => {
+            const name = d.path.split("/").pop() ?? d.path;
+            const source = d.path.startsWith("email/") ? `via ${d.path.split("/")[1]}` : "uploaded";
+            return (
+              <div key={d.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
+                <span style={{ color: "var(--acc)", flex: "none" }}><Icon.file size={13} /></span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--mut2)", flex: "none" }}>{source}</span>
+                {typeof d.matched === "number" && <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--accM)", flex: "none" }}>{d.matched} HITS</span>}
+                <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--mut2)", flex: "none" }}>{d.chunks} CH</span>
+              </div>
+            );
+          })}
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 10 }}>{docsList.length} DOCUMENT{docsList.length === 1 ? "" : "S"} · ASK ABOUT ANY OF THEM</div>
         </div>
       );
     }

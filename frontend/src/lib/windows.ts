@@ -21,6 +21,7 @@ export const WINDOWS: WindowDef[] = [
   { id: "lunch", label: "LUNCH · YOUR USUAL", dockLabel: "Lunch", icon: "coffee", tier: "preview" },
   { id: "code", label: "CODE · PR #412", dockLabel: "Code PR", icon: "code", tier: "preview" },
   { id: "sheet", label: "SHEET", dockLabel: "Sheet", icon: "grid", tier: "preview" },
+  { id: "library", label: "DOCUMENTS · LIBRARY", dockLabel: "Library", icon: "file", tier: "real" },
   { id: "contract", label: "CONTRACT · REDLINES", dockLabel: "Contract", icon: "edit", tier: "real" },
   { id: "ambient", label: "AMBIENT · WEATHER & WATCHLIST", dockLabel: "Weather", icon: "cloud", tier: "preview" },
   { id: "slack", label: "SLACK", dockLabel: "Slack", icon: "hash", tier: "preview" },

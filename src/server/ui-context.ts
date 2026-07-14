@@ -31,12 +31,23 @@ export interface UiEvent {
   n?: number; // count when meaningful (sources found, emails archived)
 }
 
+// A document as shown in the Library window: what it is, where it came
+// from, and (for a filtered view) how strongly it matched the ask.
+export interface UiDoc {
+  path: string;
+  title: string | null;
+  chunks: number;
+  matched?: number;
+}
+
 export interface UiContext {
   seq: number;
   window: string;
   email?: UiEmail | null;
   theme?: string | null;
   events?: UiEvent[];
+  docs?: UiDoc[] | null;
+  docsQuery?: string | null;
 }
 
 const contexts = new Map<string, UiContext>();
@@ -58,6 +69,8 @@ export function publishUiContext(
     email: email === undefined ? prev?.email ?? null : email,
     theme: theme ?? prev?.theme ?? null,
     events: prev?.events ?? [],
+    docs: prev?.docs ?? null,
+    docsQuery: prev?.docsQuery ?? null,
   };
   contexts.set(tenantId, next);
   // Every context change is diagnosable from one log line.
@@ -83,8 +96,26 @@ export function publishUiEvent(tenantId: string, ev: Omit<UiEvent, "id" | "at">)
     email: prev?.email ?? null,
     theme: prev?.theme ?? null,
     events,
+    docs: prev?.docs ?? null,
+    docsQuery: prev?.docsQuery ?? null,
   });
   if (ev.kind !== "speak") console.log(`[ev] ${ev.kind}${ev.state ? ":" + ev.state : ""} ${ev.label.slice(0, 80)}`);
+}
+
+// The Library window's content: a set of documents (optionally the result of
+// a "related to X" filter), surfaced with the library window in front.
+export function publishUiDocs(tenantId: string, docs: UiDoc[], query: string | null): void {
+  const prev = contexts.get(tenantId);
+  contexts.set(tenantId, {
+    seq: seq++,
+    window: "library",
+    email: prev?.email ?? null,
+    theme: prev?.theme ?? null,
+    events: prev?.events ?? [],
+    docs,
+    docsQuery: query,
+  });
+  console.log(`[ctx] seq=${seq - 1} window=library docs=${docs.length}${query ? ` query="${query}"` : ""}`);
 }
 
 export function getUiContext(tenantId: string): UiContext | null {
