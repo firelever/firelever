@@ -7,6 +7,7 @@ import { Orb, OrbMode } from "./components/Orb";
 import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, UiDoc, InboxRow } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
+import { annotateNumbers } from "./lib/spokenNumbers";
 
 interface Msg { role: "user" | "bot"; text: string; cite?: string }
 interface Draft { id: number; from: string; subject: string; category: string; urgency: string; draft: string; confident: boolean; grounded_in: string[]; attachments: string[] }
@@ -396,7 +397,7 @@ export function App() {
           <div style={{ fontSize: 13, color: "var(--mut2)", marginBottom: 8 }}>{lastQuestion}</div>
           {liveAnswer.answerable ? (
             <>
-              <div style={{ fontSize: 18, lineHeight: 1.5, letterSpacing: "-0.012em", marginBottom: 14 }}>{liveAnswer.answer.replace(/\[\d+\]/g, "")}</div>
+              <div style={{ fontSize: 18, lineHeight: 1.5, letterSpacing: "-0.012em", marginBottom: 14 }}>{annotateNumbers(liveAnswer.answer.replace(/\[\d+\]/g, ""))}</div>
               {liveAnswer.citations.length > 0 && (
                 <>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -652,7 +653,7 @@ export function App() {
                   <span className="spin" style={{ width: 11, height: 11 }} /> Levi is updating, reconnecting…
                 </span>
               ) : caption ? (
-                <span className="cap">{caption}</span>
+                <span className="cap">{annotateNumbers(caption)}</span>
               ) : null
             }
           />
@@ -712,7 +713,7 @@ export function App() {
           {messages.length === 0 && <div style={{ color: "var(--mut2)", fontSize: 13, padding: "20px 4px", lineHeight: 1.6 }}>Connected to <b style={{ color: "var(--tx2)" }}>{tenant}</b>. Ask about your documents or inbox — answers are grounded in your real data, with citations.</div>}
           {messages.map((m, i) => (
             <div key={i} className={"msg " + (m.role === "user" ? "user" : "bot")}>
-              {m.text}
+              {m.role === "bot" ? annotateNumbers(m.text) : m.text}
               {m.cite && <div className="cite"><span className="tag">SRC</span><span className="ref">{m.cite}</span></div>}
             </div>
           ))}
