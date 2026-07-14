@@ -751,6 +751,12 @@ const GENERIC = new Set([
   "the", "and", "for", "you", "are", "can", "not", "but", "was", "has", "had", "did", "get", "got",
   "her", "him", "his", "she", "own", "our", "out", "who", "how", "why", "its", "yes", "let", "all",
   "any", "new", "now", "one", "two", "say", "see", "too", "use", "way", "off", "per", "via",
+  // conversational filler and email pleasantries: these live in every email
+  // body's opening line, and counting them as entities once routed a "please
+  // confirm" follow-up out of a documents conversation into the inbox
+  "please", "thanks", "thank", "confirm", "confirmed", "confirmation", "okay", "yeah", "sure",
+  "regards", "sincerely", "attached", "attachment", "hello", "dear", "best", "kind", "here",
+  "just", "want", "wanted", "said", "tell", "currently", "this",
 ]);
 interface Lexicon { inbox: Set<string>; docs: Set<string>; ws: Set<string> }
 const lexCache = new Map<string, { at: number; lex: Lexicon }>();
@@ -773,8 +779,13 @@ function lexiconFor(tenantId: string): Lexicon {
     for (const e of emails) {
       tokens(e.from_addr).forEach((t) => lex.inbox.add(t));
       tokens(e.subject).forEach((t) => lex.inbox.add(t));
-      // sender names usually live in the first line of real emails ("Hi, I'm Dana...")
-      tokens(e.body.slice(0, 200)).forEach((t) => lex.inbox.add(t));
+      // Sender names usually live in the first line ("Hi, I'm Dana...") —
+      // but so do pleasantries. Only capitalized, name-like words qualify;
+      // lowercase prose from bodies must never become an "entity".
+      (e.body.slice(0, 200).match(/\b[A-Z][a-z]{2,}\b/g) ?? [])
+        .map((w) => w.toLowerCase())
+        .filter((w) => w.length >= 3 && !GENERIC.has(w))
+        .forEach((t) => lex.inbox.add(t));
     }
     const docs = db.prepare(`SELECT path, title FROM documents WHERE tenant_id = ?`).all(tenantId) as {
       path: string;
