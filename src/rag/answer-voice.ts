@@ -43,12 +43,11 @@ const SPEAK =
   "Write the reply exactly as it should be spoken aloud: expand abbreviations (write Street not St., " +
   "Avenue not Ave., Apartment not Apt.), read email addresses as 'name at domain dot com', and avoid " +
   "symbols entirely: say 'at' not @, 'and' not &, 'percent' not %, and 'dollars' for $ amounts. " +
-  "NUMBERS: never put a comma inside a number (write 288000 dollars or 288 thousand dollars, never 288,000 — " +
-  "the voice pauses at the comma). NEVER write digits separated by spaces like '4 8 3 4' — isolated digits make " +
-  "the voice stutter. Write numbers as the WORDS a person would say: house numbers in natural spoken groups " +
-  "(4834 Ute Street becomes 'forty eight thirty four Ute Street', 900 Oak Court stays 'nine hundred Oak Court'), " +
-  "and true digit sequences (zip codes, confirmation and invoice numbers, phone numbers) as digit words " +
-  "('three two eight one nine', not '3 2 8 1 9').";
+  "NUMBERS: write EVERY number you speak fully in words — bare digits make the voice stutter and commas make it " +
+  "pause mid-number. Money and quantities: 'two hundred eighty eight thousand dollars', never 288,000 or " +
+  "'288 thousand'. House and street numbers as a person says them: 'forty eight thirty four Ute Street', never " +
+  "4834 or '4 8 3 4'. Digit sequences (zip codes, invoice, confirmation, and phone numbers) as digit words: " +
+  "'three two eight one nine'. Small counts and dates may stay simple words: 'three emails', 'June thirtieth'.";
 
 // ---- action protocol ----
 // The voice model can DO a small set of things, not just talk. It tags exactly
