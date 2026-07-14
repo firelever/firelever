@@ -661,11 +661,11 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
             .map(([docPath, v]) => { const matched = v.n;
               const row = db
                 .prepare(
-                  `SELECT d.title, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+                  `SELECT d.title, d.doc_type, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
                    WHERE d.tenant_id = ? AND d.path = ? GROUP BY d.id`
                 )
-                .get(tenantId, docPath) as { title: string | null; chunks: number } | undefined;
-              return { path: docPath, title: row?.title ?? null, chunks: row?.chunks ?? 0, matched };
+                .get(tenantId, docPath) as { title: string | null; doc_type: string | null; chunks: number } | undefined;
+              return { path: docPath, title: row?.title ?? null, doc_type: row?.doc_type ?? null, chunks: row?.chunks ?? 0, matched };
             })
             .sort((x, y) => (y.matched ?? 0) - (x.matched ?? 0));
         const searched = build(2).length ? build(2) : build(1);
