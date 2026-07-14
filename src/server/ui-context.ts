@@ -38,6 +38,7 @@ export interface UiDoc {
   title: string | null;
   chunks: number;
   matched?: number;
+  doc_type?: string | null;
 }
 
 export interface UiContext {

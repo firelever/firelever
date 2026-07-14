@@ -51,5 +51,14 @@ export async function ingestFile(
     hash,
     chunks.map((c, i) => ({ ...c, embedding: embeddings[i] }))
   );
+  // Classification rides ingestion (ADR-019): tag what the document is and
+  // what it pertains to. Best-effort — a classifier hiccup must not fail the
+  // ingest; the boot backfill catches anything missed (topics stays NULL).
+  try {
+    const { classifyDocument } = await import("./doc-classify.js");
+    await classifyDocument(tenantId, displayPath);
+  } catch (e) {
+    console.error(`[doc-classify] ${displayPath}: ${e instanceof Error ? e.message : e}`);
+  }
   return { outcome: "ingested", chunks: chunks.length, title };
 }

@@ -65,7 +65,7 @@ export interface VoiceResult { transcript: string; answerable: boolean; answer: 
 export interface UiEmail { id: number; from_addr: string; subject: string; received_at: string | null; body: string; draft_reply: string | null; status: string; sent_at: string | null; attachments?: string[] }
 export interface InboxRow { id: number; from_addr: string; subject: string; category: string | null; status: string; needs_reply: number | null; received_at: string | null; attachments?: string[] }
 export interface UiEvent { id: number; at: number; kind: "route" | "search" | "sources" | "action" | "result" | "note" | "speak" | "ingest" | "mail"; state?: "run" | "ok" | "fail"; label: string; n?: number }
-export interface UiDoc { path: string; title: string | null; chunks: number; matched?: number }
+export interface UiDoc { path: string; title: string | null; chunks: number; matched?: number; doc_type?: string | null }
 export interface UiCtx { seq: number; window: string | null; email?: UiEmail | null; theme?: string | null; events?: UiEvent[]; docs?: UiDoc[] | null; docsQuery?: string | null }
 
 export interface WsItem { id: number; kind: string; title: string; body: string | null; done: number; at: string | null }

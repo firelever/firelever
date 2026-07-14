@@ -38,6 +38,20 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id');
 `);
 
+// Additive migration: document classification (ADR-019) — what a document IS
+// and what it PERTAINS TO, tagged at ingest so "everything about Ute Street"
+// is an exact lookup. ADD COLUMN throws if the column exists; that's fine.
+for (const [col, type] of [
+  ["doc_type", "TEXT"],
+  ["topics", "TEXT"], // JSON array of properties/entities/deals
+] as const) {
+  try {
+    db.exec(`ALTER TABLE documents ADD COLUMN ${col} ${type}`);
+  } catch {
+    /* column already exists */
+  }
+}
+
 export function getMeta(key: string): string | null {
   const row = db.prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as
     | { value: string }

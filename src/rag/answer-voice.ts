@@ -25,6 +25,7 @@ import { previewCleanup, applyCleanup, labelInGmail } from "../triage/cleanup.js
 import { publishUiContext, publishUiDocs, publishUiEvent, getLastIntent, setLastIntent, UiEmail } from "../server/ui-context.js";
 import { addMemory, memoryBlock } from "./memory.js";
 import { upsertContact, contactByName, contactsBlock, isKnownAddress } from "./contacts.js";
+import { docsByTopic } from "./doc-classify.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -636,8 +637,12 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
     }
     if (a.type === "show_documents") {
       const q = a.match?.trim();
-      let docs: { path: string; title: string | null; chunks: number; matched?: number }[];
+      let docs: { path: string; title: string | null; chunks: number; matched?: number; doc_type?: string | null }[];
       if (q) {
+        // CLASSIFICATION FIRST: documents tagged as pertaining to the match
+        // are in, period — a HUD statement full of numbers belongs to its
+        // property even when the street name barely appears in the text.
+        const tagged = docsByTopic(tenantId, q);
         // Content-based, not filename-based: "documents about Ute Street"
         // must find the Title Commitment even though "Ute" isn't in its name.
         const hits = await search(tenantId, q, 60, getEmbedder(), "hybrid").catch(() => []);
@@ -663,13 +668,17 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
               return { path: docPath, title: row?.title ?? null, chunks: row?.chunks ?? 0, matched };
             })
             .sort((x, y) => (y.matched ?? 0) - (x.matched ?? 0));
-        docs = build(2); // one stray passage is a coincidence, not a related document
-        if (!docs.length) docs = build(1);
+        const searched = build(2).length ? build(2) : build(1);
+        const seen = new Set(tagged.map((d) => d.path));
+        docs = [
+          ...tagged.map((d) => ({ ...d, matched: byDoc.get(d.path)?.n })),
+          ...searched.filter((d) => !seen.has(d.path)),
+        ];
         if (!docs.length) return `I don't have any documents related to ${q}. Nothing was pulled up.`;
       } else {
         docs = db
           .prepare(
-            `SELECT d.path, d.title, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+            `SELECT d.path, d.title, d.doc_type, COUNT(c.id) chunks FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
              WHERE d.tenant_id = ? GROUP BY d.id ORDER BY d.ingested_at DESC`
           )
           .all(tenantId) as { path: string; title: string | null; chunks: number }[];

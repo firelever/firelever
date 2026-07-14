@@ -642,4 +642,10 @@ if (process.env.WATCH_INBOX !== "0") {
       });
   };
   setTimeout(() => runBackfill(1), 30_000);
+  // Classify documents that predate the classifier; no-op once caught up.
+  setTimeout(() => {
+    import("../rag/doc-classify.js")
+      .then(({ backfillDocTopics }) => backfillDocTopics("firelever"))
+      .catch((e) => console.error("[doc-classify] backfill failed:", e));
+  }, 75_000);
 }

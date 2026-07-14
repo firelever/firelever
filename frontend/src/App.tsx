@@ -544,6 +544,7 @@ export function App() {
               <div key={d.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
                 <span style={{ color: "var(--acc)", flex: "none" }}><Icon.file size={13} /></span>
                 <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                {d.doc_type && <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, letterSpacing: "0.04em", color: "var(--acc)", background: "rgba(var(--accRGB),0.1)", border: "1px solid rgba(var(--accRGB),0.2)", padding: "1px 6px", borderRadius: 5, flex: "none", textTransform: "uppercase" }}>{d.doc_type}</span>}
                 <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--mut2)", flex: "none" }}>{source}</span>
                 {typeof d.matched === "number" && <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--accM)", flex: "none" }}>{d.matched} HITS</span>}
                 <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--mut2)", flex: "none" }}>{d.chunks} CH</span>
