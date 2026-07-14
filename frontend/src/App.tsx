@@ -266,6 +266,9 @@ export function App() {
           if (fresh.length) {
             lastEvIdRef.current = fresh[fresh.length - 1].id;
             setActivity((a) => [...a, ...fresh].slice(-24));
+            // New mail or a fresh draft: the inbox window updates itself
+            // instead of waiting for the next conversation turn.
+            if (fresh.some((e) => e.kind === "mail")) loadTriage();
           }
           if (ctx.email !== undefined) setFocusEmail(ctx.email ?? null);
           if (ctx.theme && (THEME_ORDER as readonly string[]).includes(ctx.theme)) setTheme(ctx.theme as ThemeName);
@@ -376,7 +379,7 @@ export function App() {
   const lastAction = [...activity].reverse().find((e) => e.kind === "action" && e.state === "run");
   const acting = !!lastAction && nowMs - lastAction.at < 6000 && !activity.some((r) => r.id > lastAction.id && r.kind === "result");
   const evGlyph = (e: UiEvent) =>
-    e.kind === "route" ? "→" : e.kind === "search" ? "◎" : e.kind === "sources" ? "▤" : e.kind === "action" ? "⚡" : e.kind === "result" ? (e.state === "fail" ? "✕" : "✓") : e.kind === "ingest" ? "⇪" : "◈";
+    e.kind === "route" ? "→" : e.kind === "search" ? "◎" : e.kind === "sources" ? "▤" : e.kind === "action" ? "⚡" : e.kind === "result" ? (e.state === "fail" ? "✕" : "✓") : e.kind === "ingest" ? "⇪" : e.kind === "mail" ? "✉" : "◈";
 
   // Live-data window bodies for the wired windows; static previews for the rest.
   function renderWindow(id: string): ReactNode {

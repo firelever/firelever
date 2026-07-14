@@ -252,6 +252,14 @@ export async function processEmails(
       skipped++; // already seen this message_id
       continue;
     }
+    // New mail announces itself on the activity rail the moment it lands —
+    // the window refreshes off this event instead of waiting for the next
+    // conversation turn.
+    publishUiEvent(tenantId, {
+      kind: "mail",
+      state: "ok",
+      label: `New email: "${e.subject.slice(0, 45)}" from ${e.from_addr.split("@")[0]}`,
+    });
     // One bad email must not kill the run: mark it and move on. 'error' rows
     // stay visible in the DB for diagnosis and manual retry.
     try {
@@ -266,6 +274,7 @@ export async function processEmails(
       console.log(`  ${c.category.padEnd(15)} ${c.urgency.padEnd(6)} reply=${c.needs_reply}  ${e.subject}`);
 
       if (c.needs_reply && c.category !== "newsletter_spam") {
+        publishUiEvent(tenantId, { kind: "mail", state: "run", label: `Drafting a reply for "${e.subject.slice(0, 40)}"` });
         const d = await draftReply(tenantId, e.from_addr, e.subject, e.body, c);
         updateEmail(id, {
           draft_reply: d.reply,
@@ -275,6 +284,7 @@ export async function processEmails(
           draft_confident: d.confident ? 1 : 0,
           status: "drafted",
         });
+        publishUiEvent(tenantId, { kind: "mail", state: "ok", label: `Reply drafted for "${e.subject.slice(0, 40)}" — awaiting your approval` });
       }
 
       // Pull document attachments into the knowledge base, with provenance.
