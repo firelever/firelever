@@ -132,3 +132,53 @@ export function localLeadCounts(): { metro_id: string; n: number }[] {
     .prepare(`SELECT metro_id, COUNT(*) n FROM local_leads GROUP BY metro_id`)
     .all() as { metro_id: string; n: number }[];
 }
+
+// ---- enrichment support (Milestone 2) ----
+
+export interface LocalLead {
+  id: number;
+  metro_id: string;
+  place_id: string;
+  business_name: string;
+  phone: string | null;
+  website: string | null;
+  address: string | null;
+  rating: number | null;
+  review_count: number | null;
+}
+
+// A lead's current stage is its latest pipeline row.
+export function leadsAtStage(stage: string, limit = 200): LocalLead[] {
+  return db
+    .prepare(
+      `SELECT l.* FROM local_leads l
+       JOIN (SELECT lead_id, stage, MAX(id) mid FROM local_pipeline GROUP BY lead_id) p ON p.lead_id = l.id
+       WHERE p.stage = ? ORDER BY l.id LIMIT ?`
+    )
+    .all(stage, limit) as LocalLead[];
+}
+
+export function setStage(leadId: number, stage: string, note?: string): void {
+  db.prepare(`INSERT INTO local_pipeline (lead_id, stage, changed_at, note) VALUES (?, ?, ?, ?)`).run(
+    leadId,
+    stage,
+    now(),
+    note ?? null
+  );
+}
+
+// Evidence is mandatory: a signal row without evidence is a bug, not a row
+// (spec §2: never fabricate a signal). present=1 means the LEAK exists.
+export function insertSignal(leadId: number, signalType: string, present: boolean, evidence: object): void {
+  const ev = JSON.stringify(evidence);
+  if (!ev || ev === "{}" || ev === "null") throw new Error(`signal ${signalType} for lead ${leadId} has no evidence`);
+  db.prepare(
+    `INSERT INTO local_signals (lead_id, signal_type, present, evidence, detected_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(leadId, signalType, present ? 1 : 0, ev, now());
+}
+
+export function signalsForLead(leadId: number): { signal_type: string; present: number; evidence: string }[] {
+  return db
+    .prepare(`SELECT signal_type, present, evidence FROM local_signals WHERE lead_id = ? ORDER BY id`)
+    .all(leadId) as { signal_type: string; present: number; evidence: string }[];
+}

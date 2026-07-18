@@ -30,7 +30,8 @@
     "memory": "tsx src/rag/memory-cli.ts",
     "repair": "tsx src/rag/repair-cli.ts",
     "gcal-auth": "tsx src/calendar/auth-cli.ts",
-    "leads:source": "tsx src/leadgen/source.ts"
+    "leads:source": "tsx src/leadgen/source.ts",
+    "leads:enrich": "tsx src/leadgen/enrich.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
