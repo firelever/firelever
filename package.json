@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "FireLever lead-gen agent pipeline: prospect, enrich, score, draft — human approves everything",
+  "description": "FireLever lead-gen agent pipeline: prospect, enrich, score, draft \u2014 human approves everything",
   "scripts": {
     "pipeline": "tsx src/pipeline.ts",
     "digest": "tsx src/digest.ts",
@@ -29,7 +29,8 @@
     "requeue": "tsx src/triage/requeue-cli.ts",
     "memory": "tsx src/rag/memory-cli.ts",
     "repair": "tsx src/rag/repair-cli.ts",
-    "gcal-auth": "tsx src/calendar/auth-cli.ts"
+    "gcal-auth": "tsx src/calendar/auth-cli.ts",
+    "leads:source": "tsx src/leadgen/source.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",

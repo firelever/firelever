@@ -1,0 +1,15 @@
+{
+  "hvac": [
+    { "place_id": "TEST-PLACE-001", "business_name": "TEST Cool Air HVAC", "phone": "(555) 010-0001", "website": "https://example.com/test-cool-air", "address": "100 Test Ave, Orlando, FL", "rating": 4.2, "review_count": 18 },
+    { "place_id": "TEST-PLACE-002", "business_name": "TEST Breeze Heating & Air", "phone": "(555) 010-0002", "website": null, "address": "200 Test Blvd, Orlando, FL", "rating": 3.9, "review_count": 6 }
+  ],
+  "plumber": [
+    { "place_id": "TEST-PLACE-003", "business_name": "TEST Pipe Pros Plumbing", "phone": "(555) 010-0003", "website": "https://example.com/test-pipe-pros", "address": "300 Test St, Orlando, FL", "rating": 4.7, "review_count": 41 }
+  ],
+  "roofing": [
+    { "place_id": "TEST-PLACE-004", "business_name": "TEST Summit Roofing", "phone": null, "website": null, "address": "400 Test Rd, Orlando, FL", "rating": 4.0, "review_count": 3 }
+  ],
+  "electrician": [
+    { "place_id": "TEST-PLACE-001", "business_name": "TEST Cool Air HVAC (dup)", "phone": "(555) 010-0001", "website": null, "address": "100 Test Ave, Orlando, FL", "rating": 4.2, "review_count": 18 }
+  ]
+}
