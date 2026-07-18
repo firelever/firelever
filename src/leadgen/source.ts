@@ -3,6 +3,7 @@
 //   npm run leads:source -- --metro orlando-trades
 // Idempotent: place_id dedup means reruns add nothing. Every run logs API
 // calls, estimated cost, and found/new counts (spec §6 auditability).
+import "../config.js"; // side effect: loads .env before anything reads process.env
 import fs from "fs";
 import path from "path";
 import { PlacesClient, placesConfigured } from "./places.js";
