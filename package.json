@@ -32,7 +32,8 @@
     "gcal-auth": "tsx src/calendar/auth-cli.ts",
     "leads:source": "tsx src/leadgen/source.ts",
     "leads:enrich": "tsx src/leadgen/enrich.ts",
-    "leads:qualify": "tsx src/leadgen/qualify.ts"
+    "leads:qualify": "tsx src/leadgen/qualify.ts",
+    "leads:outreach": "tsx src/leadgen/outreach.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",

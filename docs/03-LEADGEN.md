@@ -61,3 +61,27 @@ converts. The system amplifies a proven message; it does not replace proving one
 - `GOOGLE_PLACES_API_KEY` in .env + fly secrets (Google Cloud console ->
   enable "Places API (New)" -> create API key).
 - EMAIL_FOOTER postal address in config.ts before any send (existing guard).
+
+## AMENDMENT (2026-07-14): automatic outreach, human out of the loop
+
+Peter's explicit decision after documented pushback (domain reputation,
+personalization economics, missing emails): the original §6 "human in the
+loop on all outreach / no auto send, ever" is REPLACED for the local lead
+engine by policy auto-send with hard rails, all enforced in code:
+
+- Eligible: grade >= 75, stage 'qualified', discovered email, not opted out,
+  never contacted before (one outreach thread per lead, ever).
+- Ramp cap: max 3 auto-sends per day (config limits.max_auto_sends_per_day).
+- Emails discovered only from the business's own website (contact pages).
+- CAN-SPAM: EMAIL_FOOTER (identity + postal address + opt-out) appended to
+  every send; the engine REFUSES to send while the postal address
+  placeholder is unset. Opt-outs honored before drafting and before sending.
+- Stop-on-reply: a reply detected in the inbox moves the lead to 'replied',
+  cancels any queued follow-up, and surfaces as a hot-reply event in Levi.
+- Every draft and send is visible in the Pipeline window and announced on
+  the activity rail; auto-sent rows record approved_by='auto-policy'.
+- Kill switch: limits.auto_send=false stops the engine at the next tick.
+
+Recommendation on record: move sending to a separate domain before scaling
+past the ramp cap. The live leads.db now resides on the Fly volume; local
+CLI runs must re-upload (checkpoint WAL first) or move server-side (M6).

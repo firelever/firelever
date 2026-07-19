@@ -653,6 +653,20 @@ if (process.env.WATCH_INBOX !== "0") {
       });
   };
   setTimeout(() => runBackfill(1), 30_000);
+  // Automatic outreach engine (docs/03-LEADGEN.md amendment): drafts and
+  // sends under hard rails on an hourly tick. The kill switch and every
+  // rail live inside outreachTick itself.
+  const outreachLoop = () => {
+    import("../leadgen/outreach.js")
+      .then(({ outreachTick }) => outreachTick())
+      .then((r) => {
+        if (r.blocked && r.blocked !== "daily cap of 3 reached") console.log("[outreach]", r.blocked);
+      })
+      .catch((e) => console.error("[outreach] tick failed:", e instanceof Error ? e.message : e));
+  };
+  setTimeout(outreachLoop, 120_000); // first tick 2min after boot
+  setInterval(outreachLoop, 60 * 60_000);
+
   // Classify documents that predate the classifier; no-op once caught up.
   setTimeout(() => {
     import("../rag/doc-classify.js")

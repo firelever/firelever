@@ -260,6 +260,26 @@ export async function processEmails(
       state: "ok",
       label: `New email: "${e.subject.slice(0, 45)}" from ${e.from_addr.split("@")[0]}`,
     });
+    // Stop-on-reply + hot-reply flagging (leadgen amendment): a reply from a
+    // contacted lead halts their outreach forever and surfaces loudly —
+    // reply speed is the biggest conversion lever.
+    try {
+      const { default: leadsDb } = await import("../db.js");
+      const hot = leadsDb
+        .prepare(`SELECT id, business_name FROM local_leads WHERE email = ? COLLATE NOCASE`)
+        .get(e.from_addr) as { id: number; business_name: string } | undefined;
+      if (hot) {
+        const { setStage } = await import("../leadgen/store.js");
+        setStage(hot.id, "replied", `reply received: "${e.subject.slice(0, 60)}"`);
+        publishUiEvent(tenantId, {
+          kind: "mail",
+          state: "ok",
+          label: `HOT REPLY from ${hot.business_name.slice(0, 34)} — respond fast`,
+        });
+      }
+    } catch {
+      /* lead matching is best-effort; triage must never fail on it */
+    }
     // One bad email must not kill the run: mark it and move on. 'error' rows
     // stay visible in the DB for diagnosis and manual retry.
     try {

@@ -2,7 +2,10 @@
   "comment": "One entry per metro+vertical. Adding a metro is adding an entry here (docs/03-LEADGEN.md). radius_m caps the Places search circle; queries are the trade terms searched within it.",
   "limits": {
     "max_places_calls_per_run": 30,
-    "max_new_leads_per_run": 60
+    "max_new_leads_per_run": 60,
+    "auto_send": true,
+    "min_grade": 75,
+    "max_auto_sends_per_day": 3
   },
   "metros": [
     {
@@ -12,7 +15,12 @@
       "lat": 28.5384,
       "lng": -81.3789,
       "radius_m": 30000,
-      "queries": ["HVAC repair", "plumber", "roofing contractor", "electrician"],
+      "queries": [
+        "HVAC repair",
+        "plumber",
+        "roofing contractor",
+        "electrician"
+      ],
       "active": true
     }
   ]
