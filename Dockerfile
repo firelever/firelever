@@ -13,6 +13,7 @@ COPY tsconfig.json ./
 COPY src ./src
 COPY web ./web
 COPY scripts ./scripts
+COPY config ./config
 
 # Build the Levi (React/Vite) frontend into /app/web-dist, served by the server.
 COPY frontend ./frontend
