@@ -4,7 +4,7 @@ import { Icon } from "./lib/icons";
 import { WINDOWS } from "./lib/windows";
 import { windowContent } from "./lib/windowContent";
 import { Orb, OrbMode } from "./components/Orb";
-import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, UiDoc, InboxRow } from "./lib/api";
+import { api, AskResult, getKey, setKey, WsItem, RedlineResult, UiEmail, UiEvent, UiDoc, InboxRow, LeadBoard } from "./lib/api";
 import { playAudio } from "./lib/voice";
 import { startLive, LiveConvo } from "./lib/live";
 import { annotateNumbers } from "./lib/spokenNumbers";
@@ -32,6 +32,7 @@ export function App() {
   const [lastQuestion, setLastQuestion] = useState("");
   const [queue, setQueue] = useState<Draft[]>([]);
   const [inboxRecent, setInboxRecent] = useState<InboxRow[]>([]);
+  const [board, setBoard] = useState<LeadBoard | null>(null);
   const [tasks, setTasks] = useState<WsItem[]>([]);
   const [events, setEvents] = useState<WsItem[]>([]);
   const [notes, setNotes] = useState<WsItem[]>([]);
@@ -239,12 +240,14 @@ export function App() {
     api.triage().then((r) => setQueue(r.queue)).catch(() => {});
     api.inboxRecent().then((r) => setInboxRecent(r.emails)).catch(() => {});
   };
+  // 403 for non-owner tenants: the Pipeline window simply stays empty there.
+  const loadBoard = () => api.leadgenBoard().then(setBoard).catch(() => {});
   const loadWorkspace = () => {
     api.workspace("task").then((r) => setTasks(r.items)).catch(() => {});
     api.workspace("event").then((r) => setEvents(r.items)).catch(() => {});
     api.workspace("note").then((r) => setNotes(r.items)).catch(() => {});
   };
-  useEffect(() => { if (authed) loadWorkspace(); }, [authed]);
+  useEffect(() => { if (authed) { loadWorkspace(); loadBoard(); } }, [authed]);
 
   // Follow the voice conversation in real time: the brain publishes which
   // window (and which email) it's discussing; surface it as it speaks.
@@ -281,6 +284,7 @@ export function App() {
           if (ctx.window) {
             promote(ctx.window);
             if (ctx.window === "inbox") loadTriage();
+            else if (ctx.window === "pipeline") loadBoard();
             else if (ctx.window === "tasks" || ctx.window === "schedule" || ctx.window === "notes") loadWorkspace();
           }
         })
@@ -529,6 +533,31 @@ export function App() {
             <div key={n.id} style={{ fontSize: 14, padding: "7px 0", borderBottom: "1px dashed rgba(var(--lineRGB),0.1)" }}>{n.title}</div>
           ))}
           <input onKeyDown={(e) => e.key === "Enter" && addItem("note", (e.target as HTMLInputElement).value)} placeholder="Jot a note…" style={addInput} />
+        </div>
+      );
+    }
+    if (id === "pipeline") {
+      if (!board || (!board.top.length && !Object.keys(board.stages).length))
+        return <div style={{ color: "var(--mut2)", fontSize: 13, lineHeight: 1.6, paddingTop: 8 }}>No local leads yet. Run the sourcing pipeline, then ask Levi "how's my pipeline?"</div>;
+      const gradeColor = (g: number) => (g >= 70 ? "var(--okD)" : g >= 40 ? "var(--warn)" : "var(--mut2)");
+      return (
+        <div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {Object.entries(board.stages).map(([st, n]) => (
+              <span key={st} style={{ fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.05em", padding: "2px 8px", borderRadius: 6, border: "1px solid rgba(var(--lineRGB),0.16)", color: "var(--mut)" }}>
+                {st.replace("_", " ").toUpperCase()} {n}
+              </span>
+            ))}
+          </div>
+          {board.top.slice(0, 10).map((l) => (
+            <div key={l.id} style={{ display: "flex", alignItems: "baseline", gap: 9, padding: "7px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, color: gradeColor(l.grade), width: 26, flex: "none" }}>{l.grade}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.business_name}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--accM)", flex: "none", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{l.matched_offer.toUpperCase()}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: l.stage === "qualified" ? "var(--mut2)" : "var(--acc)", flex: "none" }}>{l.stage.replace("_", " ").toUpperCase()}</span>
+            </div>
+          ))}
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 10 }}>TOP {Math.min(10, board.top.length)} BY GRADE · SAY "MARK ___ CONTACTED" AS YOU WORK</div>
         </div>
       );
     }

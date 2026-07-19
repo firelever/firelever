@@ -26,6 +26,7 @@ import { publishUiContext, publishUiDocs, publishUiEvent, getLastIntent, setLast
 import { addMemory, memoryBlock } from "./memory.js";
 import { upsertContact, contactByName, contactsBlock, isKnownAddress } from "./contacts.js";
 import { docsByTopic } from "./doc-classify.js";
+import { pipelineBoard, leadById, setStage, PIPELINE_STAGES } from "../leadgen/store.js";
 import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
@@ -68,13 +69,14 @@ type Action =
   | { type: "add_task" | "add_event" | "add_note"; title: string; body?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[]; contact_name?: string }
   | { type: "update_event"; id?: string | number; match?: string; title?: string; at?: string; duration_minutes?: number; meet?: boolean; invite?: string[]; contact_name?: string }
   | { type: "cancel_event"; id?: string | number; match?: string }
+  | { type: "set_lead_stage"; lead_id: number; stage: string }
   | { type: "complete_task"; id: number }
   | { type: "remember"; note: string }
   | { type: "show_documents"; match?: string }
   | { type: "show_window"; window: string }
   | { type: "set_theme"; theme: string };
 
-const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract", "library"];
+const WINDOWS = ["answer", "inbox", "schedule", "tasks", "notes", "contract", "library", "pipeline"];
 const THEMES = ["ember", "graphite", "nebula", "signal", "ivory"];
 
 const ACTIONS =
@@ -101,9 +103,10 @@ const ACTIONS =
   '<<action:{"type":"update_event","id":"g2","at":"YYYY-MM-DD HH:MM","duration_minutes":45,"title":"...","meet":true,"invite":["addr@domain.com"],"contact_name":"Dana"}>> reschedules, moves, renames, extends, adds a Meet link, or FIXES THE GUEST LIST of an existing event — "invite" replaces the guests entirely (use it to correct a wrong invite address); include only the fields being changed. ' +
   'Use the [gN] id shown in the schedule for Google Calendar events, or the numeric [id N] for local ones; if you have NOT seen a schedule listing this conversation, pass "match":"words from the event title" instead of an id and the system finds it. ' +
   '<<action:{"type":"cancel_event","id":"g2"}>> cancels an event; invitees are notified and it is recoverable from the calendar trash, so it is safe. ' +
+  '<<action:{"type":"set_lead_stage","lead_id":ID,"stage":"contacted|replied|call_booked|won|lost"}>> moves a pipeline lead to a new stage when the user says they contacted it, got a reply, booked a call, won, or lost it (use the [LID] number from the pipeline data). ' +
   '<<action:{"type":"complete_task","id":ID}>> checks a task off. ' +
   '<<action:{"type":"show_documents","match":"Ute Street"}>> pulls the document LIBRARY onto the screen — all documents when "match" is omitted, or only the documents whose CONTENT relates to the match phrase (use it when the user asks to see their documents, or everything about a property, deal, or person). ' +
-  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract|library"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Inbox window, notes is Prep, library is Documents). ' +
+  '<<action:{"type":"show_window","window":"answer|inbox|schedule|tasks|notes|contract|library|pipeline"}>> puts that window on screen when the user asks to see, open, switch to, or go back to it (inbox is the Inbox window, notes is Prep, library is Documents, pipeline is the local-leads board). ' +
   '<<action:{"type":"set_theme","theme":"ember|graphite|nebula|signal|ivory"}>> switches the color theme when asked. ' +
   '<<action:{"type":"remember","note":"..."}>> permanently saves a fact the user corrects or confirms ' +
   "(a name, a spelling, a number, a preference); the note should state the correct fact and the wrong variant, " +
@@ -309,6 +312,7 @@ function actionLabel(a: Action): string {
     case "add_note": return `Adding note`;
     case "update_event": return `Updating calendar event`;
     case "cancel_event": return `Cancelling event`;
+    case "set_lead_stage": return `Moving lead ${a.lead_id} to ${a.stage}`;
     case "complete_task": return `Checking off task`;
     case "remember": return `Saving to memory`;
     case "show_documents": return a.match ? `Finding documents about ${a.match}` : `Opening the document library`;
@@ -635,6 +639,16 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
       }
       return "I couldn't find that event, so nothing was cancelled.";
     }
+    if (a.type === "set_lead_stage") {
+      const stage = String(a.stage ?? "").trim();
+      if (!(PIPELINE_STAGES as readonly string[]).includes(stage) || ["new", "enriched", "qualified"].includes(stage))
+        return "Stages I can set are contacted, replied, call booked, won, or lost.";
+      const lead = leadById(Number(a.lead_id));
+      if (!lead) return "I couldn't find that lead, so nothing was moved.";
+      setStage(lead.id, stage, "set by voice via Levi");
+      publishUiContext(tenantId, "pipeline", null);
+      return `Done. ${lead.business_name} is marked ${stage.replace("_", " ")}.`;
+    }
     if (a.type === "complete_task") {
       const ok = updateItem(tenantId, a.id, { done: 1 });
       if (ok) publishUiContext(tenantId, "tasks");
@@ -723,8 +737,9 @@ async function executeAction(tenantId: string, a: Action): Promise<string | null
 //   3. routed-intent memory — follow-ups stick to what the router actually
 //      chose last turn, never re-parsed from prose.
 // Negated mentions ("not the inbox, the contract") are masked before matching.
-type Intent = "chat" | "inbox" | "docs" | "workspace";
+type Intent = "chat" | "inbox" | "docs" | "workspace" | "pipeline";
 const WORKSPACE_RE = /\b(schedules?|calendars?|appointments?|meetings?|events?|tasks?|to-?dos?|notes?|reminders?)\b/;
+const PIPELINE_RE = /\b(pipeline|leads?|prospects?|outreach|qualified|lead gen|leadgen|grades?|funnel|contacted|call booked)\b/;
 const INBOX_RE = /\b(inbox|e-?mails?|reply|replies|senders?|unread|mailbox|triage|newsletters?|spam|messages?|inquir(y|ies)|correspondence)\b/;
 const DOCS_RE = /\b(documents?|contracts?|clauses?|agreements?|pdf|files?|polic(y|ies)|sellers?|buyers?|closing|deposit|price|propert(y|ies)|street|inspection|addend(um|a)|warranty|listing|agents?|brokers?|realtors?|escrow|commission)\b/;
 
@@ -734,6 +749,7 @@ function maskNegations(s: string): string {
 }
 
 function strongSignal(s: string): Intent | null {
+  if (PIPELINE_RE.test(s)) return "pipeline";
   if (WORKSPACE_RE.test(s)) return "workspace";
   if (INBOX_RE.test(s)) return "inbox";
   if (DOCS_RE.test(s)) return "docs";
@@ -852,7 +868,7 @@ function routeIntent(tenantId: string, question: string, history: VoiceTurn[]): 
   // Layer 3: conversational continuity — what did we actually route last
   // turn? Outranks weak single-word lexicon hits.
   const last = getLastIntent(tenantId);
-  if (last === "inbox" || last === "docs" || last === "workspace") return last;
+  if (last === "inbox" || last === "docs" || last === "workspace" || last === "pipeline") return last;
   // No active conversation: a weak lexicon hit is better than defaulting.
   if (scores[0][1] > 0 && scores[0][1] > scores[1][1]) return scores[0][0];
   for (let i = history.length - 1; i >= 0; i--) {
@@ -969,6 +985,38 @@ export async function streamVoiceReply(
       `${convoBlock}${dateBlock}` +
       (calendarConfigured() ? `Google Calendar (next 14 days):\n${gcalBlock || "(no upcoming events)"}\n\n` : "") +
       `Local events:\n${events || "(none)"}\n\nTasks:\n${tasks || "(none)"}\n\nNotes:\n${notes || "(none)"}\n\nQuestion: ${question}`;
+  } else if (intent === "pipeline") {
+    publishUiContext(tenantId, "pipeline", null);
+    const board = pipelineBoard(20);
+    publishUiEvent(tenantId, {
+      kind: "search",
+      state: "ok",
+      label: "Loading lead pipeline",
+      n: Object.values(board.stages).reduce((a, b) => a + b, 0),
+    });
+    const stageLine = Object.entries(board.stages)
+      .map(([st, n]) => `${st}: ${n}`)
+      .join(", ");
+    const leadLines = board.top
+      .map(
+        (l) =>
+          `[L${l.id}] ${l.business_name} | grade ${l.grade} | leak: ${l.top_leak} | offer: ${l.matched_offer} | ` +
+          `${l.review_count ?? "?"} reviews, rating ${l.rating ?? "?"} | ${l.phone ?? "no phone"} | ${l.website ?? "NO WEBSITE"} | stage ${l.stage}\n` +
+          `  why: ${l.reasoning.slice(0, 220)}`
+      )
+      .join("\n");
+    system =
+      "You are Levi, the operator's voice command center for their local-lead pipeline (fixed-scope automation " +
+      "outreach to trades businesses). Answer out loud using ONLY the pipeline data provided. Grades run 0 to 100 " +
+      "and 70 plus is a prime target; when reading a lead aloud give the business name, grade, the leak in plain " +
+      "words, and the matched offer. The user hand-writes and sends outreach themselves; you never send anything. " +
+      "When they report progress (contacted someone, got a reply, booked a call, won, lost), move that lead with " +
+      "set_lead_stage using its [LID] number. " +
+      SPEAK +
+      ACTIONS +
+      CTX +
+      MEM;
+    userContent = `${convoBlock}${dateBlock}Pipeline stages: ${stageLine || "(empty)"}\n\nTop leads by grade:\n${leadLines || "(none qualified yet)"}\n\nQuestion: ${question}`;
   } else if (intent === "inbox") {
     const rows = db
       .prepare(

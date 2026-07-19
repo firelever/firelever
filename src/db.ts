@@ -3,7 +3,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(here, "..", "leads.db"));
+// Repo root locally; LEADS_DB_PATH points at the mounted volume in prod so
+// the Levi server (pipeline window, voice) sees the same data as the CLIs.
+const db = new Database(process.env.LEADS_DB_PATH ?? path.join(here, "..", "leads.db"));
 db.pragma("journal_mode = WAL");
 
 db.exec(`

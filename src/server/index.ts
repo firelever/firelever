@@ -1,6 +1,7 @@
 // FireLever Copilot server (slice 5a, ADR-005): tenant-authenticated API + web UI.
 //   npm run serve     → http://localhost:8787
-// Every route is tenant-scoped by bearer key; no endpoint touches leads.db.
+// Every route is tenant-scoped by bearer key. leads.db (the operator's own
+// growth pipeline) is reachable ONLY by the owner tenant via /api/leadgen/*.
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { serve } from "@hono/node-server";
@@ -23,6 +24,7 @@ import { getUiContext, resetUiContext, publishUiEvent } from "./ui-context.js";
 import { listItems, createItem, updateItem, deleteItem } from "../workspace/store.js";
 import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { buildGreeting } from "./greeting.js";
+import { pipelineBoard } from "../leadgen/store.js";
 import { logTurn } from "./chatlog.js";
 import { watchdogNote, watchdogHealth, registerRemedy } from "./watchdog.js";
 import { clearVoiceCaches } from "../rag/answer-voice.js";
@@ -387,6 +389,15 @@ app.post("/api/voice", limited("ask"), async (c) => {
 // ---------- real-time UI context: what the voice conversation is about ----------
 // The voice brain publishes a context event per turn (window + entity); the
 // frontend polls this and follows along, surfacing the matching window live.
+// Local lead pipeline board for the Levi Pipeline window. leads.db is the
+// operator's own growth data, not tenant data — visible ONLY to the owner
+// tenant, preserving the original "no endpoint touches leads.db" isolation
+// for everyone else.
+app.get("/api/leadgen/board", (c) => {
+  if (c.get("tenant").id !== "firelever") return c.json({ error: "not available for this workspace" }, 403);
+  return c.json(pipelineBoard(25));
+});
+
 // Recent inbox emails for the Replies window's list view: when the
 // conversation is about the inbox in general (no single email pinned), the
 // window shows what's actually in there instead of claiming "inbox clear".

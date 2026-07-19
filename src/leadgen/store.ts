@@ -182,3 +182,57 @@ export function signalsForLead(leadId: number): { signal_type: string; present: 
     .prepare(`SELECT signal_type, present, evidence FROM local_signals WHERE lead_id = ? ORDER BY id`)
     .all(leadId) as { signal_type: string; present: number; evidence: string }[];
 }
+
+// ---- Levi command-center views (Milestone 5, pulled forward) ----
+
+export interface BoardLead {
+  id: number;
+  business_name: string;
+  phone: string | null;
+  website: string | null;
+  review_count: number | null;
+  rating: number | null;
+  grade: number;
+  top_leak: string;
+  matched_offer: string;
+  reasoning: string;
+  stage: string;
+}
+
+export function pipelineBoard(topN = 25): { stages: Record<string, number>; top: BoardLead[] } {
+  const stageRows = db
+    .prepare(
+      `SELECT p.stage, COUNT(*) n FROM (SELECT lead_id, stage, MAX(id) mid FROM local_pipeline GROUP BY lead_id) p GROUP BY p.stage`
+    )
+    .all() as { stage: string; n: number }[];
+  const stages: Record<string, number> = {};
+  for (const r of stageRows) stages[r.stage] = r.n;
+  const top = db
+    .prepare(
+      `SELECT l.id, l.business_name, l.phone, l.website, l.review_count, l.rating,
+              q.grade, q.top_leak, q.matched_offer, q.reasoning, p.stage
+       FROM local_qualifications q
+       JOIN local_leads l ON l.id = q.lead_id
+       JOIN (SELECT lead_id, stage, MAX(id) mid FROM local_pipeline GROUP BY lead_id) p ON p.lead_id = l.id
+       ORDER BY q.grade DESC LIMIT ?`
+    )
+    .all(topN) as BoardLead[];
+  return { stages, top };
+}
+
+export const PIPELINE_STAGES = ["new", "enriched", "qualified", "contacted", "replied", "call_booked", "won", "lost"] as const;
+
+export function leadById(id: number): (BoardLead & { address: string | null }) | null {
+  const row = db
+    .prepare(
+      `SELECT l.id, l.business_name, l.phone, l.website, l.address, l.review_count, l.rating,
+              COALESCE(q.grade, 0) grade, COALESCE(q.top_leak,'') top_leak, COALESCE(q.matched_offer,'') matched_offer,
+              COALESCE(q.reasoning,'') reasoning, p.stage
+       FROM local_leads l
+       LEFT JOIN local_qualifications q ON q.lead_id = l.id
+       JOIN (SELECT lead_id, stage, MAX(id) mid FROM local_pipeline GROUP BY lead_id) p ON p.lead_id = l.id
+       WHERE l.id = ?`
+    )
+    .get(id) as (BoardLead & { address: string | null }) | undefined;
+  return row ?? null;
+}

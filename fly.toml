@@ -11,6 +11,7 @@ primary_region = 'iad'
 
 [env]
   KB_DB_PATH = '/data/kb.db'
+  LEADS_DB_PATH = '/data/leads.db'
   PORT = '8080'
   # Real customer docs (scanned contracts, deal packages) run 10-25MB. 30MB
   # cap fits them while still bounding in-request ingestion on a 1GB machine.

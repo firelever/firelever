@@ -45,6 +45,7 @@ export const api = {
   voiceStatus: () => req<{ configured: boolean }>("/voice/status"),
   voiceText: (text: string) => req<{ answer: string; audio: string | null }>("/voice/text", { method: "POST", body: JSON.stringify({ text }) }),
   inboxRecent: () => req<{ emails: InboxRow[] }>("/inbox/recent"),
+  leadgenBoard: () => req<LeadBoard>("/leadgen/board"),
   uiContext: () => req<UiCtx>("/ui/context"),
   uiSessionStart: () => req<{ ok: boolean }>("/ui/session-start", { method: "POST", body: "{}" }),
   convaiStatus: () => req<{ configured: boolean }>("/convai/status"),
@@ -68,6 +69,8 @@ export interface UiEvent { id: number; at: number; kind: "route" | "search" | "s
 export interface UiDoc { path: string; title: string | null; chunks: number; matched?: number; doc_type?: string | null }
 export interface UiCtx { seq: number; window: string | null; email?: UiEmail | null; theme?: string | null; events?: UiEvent[]; docs?: UiDoc[] | null; docsQuery?: string | null }
 
+export interface BoardLead { id: number; business_name: string; phone: string | null; website: string | null; review_count: number | null; rating: number | null; grade: number; top_leak: string; matched_offer: string; reasoning: string; stage: string }
+export interface LeadBoard { stages: Record<string, number>; top: BoardLead[] }
 export interface WsItem { id: number; kind: string; title: string; body: string | null; done: number; at: string | null }
 export interface Redline { clause: string; concern: string; old_text: string; suggested_text: string }
 export interface RedlineResult { document: string; redlines: Redline[] }
