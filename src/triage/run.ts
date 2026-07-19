@@ -11,6 +11,7 @@ import { insertEmail, updateEmail } from "./store.js";
 import { ingestFile } from "../rag/ingest-file.js";
 import { SUPPORTED } from "../rag/extract.js";
 import { publishUiEvent } from "../server/ui-context.js";
+import { notifyTelegram } from "../server/notify.js";
 
 export interface Attachment {
   filename: string;
@@ -263,6 +264,7 @@ export async function processEmails(
     // Stop-on-reply + hot-reply flagging (leadgen amendment): a reply from a
     // contacted lead halts their outreach forever and surfaces loudly —
     // reply speed is the biggest conversion lever.
+    let wasHotLead = false;
     try {
       const { default: leadsDb } = await import("../db.js");
       const hot = leadsDb
@@ -276,6 +278,10 @@ export async function processEmails(
           state: "ok",
           label: `HOT REPLY from ${hot.business_name.slice(0, 34)} — respond fast`,
         });
+        wasHotLead = true;
+        void notifyTelegram(
+          `🔥 HOT LEAD REPLY\n${hot.business_name}\n"${e.subject.slice(0, 80)}"\nFrom: ${e.from_addr}\n\nReply within the hour — speed is the close.`
+        );
       }
     } catch {
       /* lead matching is best-effort; triage must never fail on it */
@@ -292,6 +298,11 @@ export async function processEmails(
         status: "triaged",
       });
       console.log(`  ${c.category.padEnd(15)} ${c.urgency.padEnd(6)} reply=${c.needs_reply}  ${e.subject}`);
+      // High-urgency real correspondence pings the phone too (once — hot lead
+      // replies already notified above).
+      if (!wasHotLead && c.needs_reply && c.urgency === "high" && ["new_business", "support"].includes(c.category)) {
+        void notifyTelegram(`📬 Needs your reply (high urgency)\n"${e.subject.slice(0, 80)}"\nFrom: ${e.from_addr}`);
+      }
 
       if (c.needs_reply && c.category !== "newsletter_spam") {
         publishUiEvent(tenantId, { kind: "mail", state: "run", label: `Drafting a reply for "${e.subject.slice(0, 40)}"` });

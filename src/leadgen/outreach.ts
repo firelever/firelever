@@ -14,6 +14,7 @@ import { MODEL, EMAIL_FOOTER } from "../config.js";
 import db from "../db.js";
 import { sendEmail, replySendingConfigured } from "../triage/send.js";
 import { publishUiEvent } from "../server/ui-context.js";
+import { notifyTelegram } from "../server/notify.js";
 import { loadMetros } from "./source.js";
 import { leadById, setStage, signalsForLead, BoardLead } from "./store.js";
 
@@ -208,6 +209,8 @@ export async function outreachTick(): Promise<{ drafted: number; sent: number; b
     }
   }
   if (drafted || sent) console.log(`[outreach] tick: drafted ${drafted}, sent ${sent}`);
+  if (sent > 0)
+    void notifyTelegram(`📤 Outreach: ${sent} note${sent === 1 ? "" : "s"} sent (${sentToday()}/${capPerDay} today). Ask Levi "who did we contact today?" for details.`);
   return { drafted, sent, blocked: null };
 }
 
