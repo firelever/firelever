@@ -141,7 +141,36 @@ export async function outreachTick(): Promise<{ drafted: number; sent: number; b
 
   let drafted = 0;
   let sent = 0;
-  for (const lead of eligibleLeads(minGrade, room) as (BoardLead & { email: string | null })[]) {
+
+  // Flush first: drafts queued while the CAN-SPAM footer was unset send now,
+  // oldest first, under the same daily cap. Their leads already carry the
+  // discovered email; the stored draft is "Subject: ...\n\nbody".
+  const blocked = db
+    .prepare(
+      `SELECT o.id oid, o.draft_body, l.id lead_id, l.business_name, l.email
+       FROM local_outreach o JOIN local_leads l ON l.id = o.lead_id
+       WHERE o.status = 'blocked_footer' AND l.email IS NOT NULL ORDER BY o.id LIMIT ?`
+    )
+    .all(room) as { oid: number; draft_body: string; lead_id: number; business_name: string; email: string }[];
+  for (const b of blocked) {
+    if (sent >= room) break;
+    if (!footerReady()) break;
+    if (optedOut(b.email)) continue;
+    const m = b.draft_body.match(/^Subject: (.*)\n\n([\s\S]*)$/);
+    if (!m) continue;
+    try {
+      await sendEmail({ to: b.email, subject: m[1], text: `${m[2]}\n\n${EMAIL_FOOTER}` });
+      db.prepare(`UPDATE local_outreach SET status = 'sent', sent_at = ? WHERE id = ?`).run(new Date().toISOString(), b.oid);
+      setStage(b.lead_id, "contacted", `auto outreach (flushed) to ${b.email}`);
+      sent++;
+      publishUiEvent(OWNER_TENANT, { kind: "mail", state: "ok", label: `Outreach sent to ${b.business_name.slice(0, 32)} (${sentToday()}/${capPerDay} today)` });
+    } catch (e) {
+      console.error(`[outreach] flush ${b.business_name}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  for (const lead of eligibleLeads(minGrade, room - sent) as (BoardLead & { email: string | null })[]) {
+    if (sent >= room) break;
     try {
       // email discovery, once, from their own site
       const email = lead.email ?? (await discoverEmail(lead.id));

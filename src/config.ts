@@ -50,7 +50,7 @@ export const FAST_MODEL = process.env.FAST_MODEL ?? "claude-haiku-4-5";
 export const EMAIL_FOOTER = `
 --
 FireLever · firelever.com
-[SET YOUR BUSINESS MAILING ADDRESS IN src/config.ts — required by CAN-SPAM]
+924 N Magnolia Avenue, Suite 202, Orlando, FL 32803, United States
 If you'd rather not hear from me, reply "no thanks" and I won't email again.
 `.trim();
 
