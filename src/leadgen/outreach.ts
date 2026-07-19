@@ -169,7 +169,10 @@ export async function outreachTick(): Promise<{ drafted: number; sent: number; b
     }
   }
 
-  for (const lead of eligibleLeads(minGrade, room - sent) as (BoardLead & { email: string | null })[]) {
+  // The daily cap governs SENDS, not attempts: walk a deeper slice of the
+  // eligible list so no-email leads (marked and skipped) don't eat the day's
+  // quota without a single send leaving.
+  for (const lead of eligibleLeads(minGrade, Math.max(15, room * 5)) as (BoardLead & { email: string | null })[]) {
     if (sent >= room) break;
     try {
       // email discovery, once, from their own site
