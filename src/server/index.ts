@@ -395,7 +395,7 @@ app.post("/api/voice", limited("ask"), async (c) => {
 // for everyone else.
 app.get("/api/leadgen/board", (c) => {
   if (c.get("tenant").id !== "firelever") return c.json({ error: "not available for this workspace" }, 403);
-  return c.json(pipelineBoard(25));
+  return c.json(pipelineBoard(100));
 });
 
 // Recent inbox emails for the Replies window's list view: when the

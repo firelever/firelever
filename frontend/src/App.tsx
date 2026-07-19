@@ -549,7 +549,7 @@ export function App() {
               </span>
             ))}
           </div>
-          {board.top.slice(0, 10).map((l) => (
+          {board.top.map((l) => (
             <div key={l.id} style={{ display: "flex", alignItems: "baseline", gap: 9, padding: "7px 2px", borderBottom: "1px dashed rgba(var(--lineRGB),0.08)" }}>
               <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, color: gradeColor(l.grade), width: 26, flex: "none" }}>{l.grade}</span>
               <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.business_name}</span>
@@ -557,7 +557,7 @@ export function App() {
               <span style={{ fontFamily: "var(--mono)", fontSize: 8.5, color: l.stage === "qualified" ? "var(--mut2)" : "var(--acc)", flex: "none" }}>{l.stage.replace("_", " ").toUpperCase()}</span>
             </div>
           ))}
-          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 10 }}>TOP {Math.min(10, board.top.length)} BY GRADE · SAY "MARK ___ CONTACTED" AS YOU WORK</div>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--mut2)", marginTop: 10 }}>{board.top.length} LEADS BY GRADE · SCROLL FOR MORE · SAY "MARK ___ CONTACTED" AS YOU WORK</div>
         </div>
       );
     }
