@@ -14,6 +14,13 @@ npm install
 export ANTHROPIC_API_KEY=sk-ant-...   # or `ant auth login`
 ```
 
+## Deploy
+
+Merging to `main` deploys to Fly (`.github/workflows/fly-deploy.yml`). It needs a
+`FLY_API_TOKEN` repo secret, made with `fly tokens create deploy -a firelever-copilot`.
+Run it by hand from the Actions tab (Deploy to Fly, Run workflow), or deploy locally with
+`fly deploy`.
+
 ## Daily loop
 
 ```sh

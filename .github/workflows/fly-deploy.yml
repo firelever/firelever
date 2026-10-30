@@ -1,0 +1,38 @@
+# Deploys to Fly (firelever-copilot) whenever main changes: merging a pull request is the deploy.
+# Needs one repo secret, FLY_API_TOKEN, from: fly tokens create deploy -a firelever-copilot
+# Without it, the run notes what's missing and stops without failing.
+name: Deploy to Fly
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "evals/**"
+      - "finetune/**"
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice::Not deployed: add a FLY_API_TOKEN repo secret (fly tokens create deploy -a firelever-copilot)."
+            exit 0
+          fi
+          flyctl deploy --remote-only
