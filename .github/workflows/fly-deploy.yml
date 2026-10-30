@@ -1,6 +1,7 @@
 # Deploys to Fly (firelever-copilot) whenever main changes: merging a pull request is the deploy.
 # Needs one repo secret, FLY_API_TOKEN, from: fly tokens create deploy -a firelever-copilot
-# Without it, the run notes what's missing and stops without failing.
+# Without it, the run notes what's missing and stops without failing. The embedding model is
+# fetched on the runner (see "Fetch the embedding model").
 name: Deploy to Fly
 
 on:
@@ -26,6 +27,29 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      # The Dockerfile bakes the embedding model in from models/, which is gitignored (it ships
+      # from the local checkout). On the runner, fetch it: first from this repo's
+      # "embedding-model" release if one exists, else from Hugging Face (HF_TOKEN optional).
+      - name: Fetch the embedding model
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          M=models/Xenova/bge-small-en-v1.5
+          if gh release download embedding-model -R "$GITHUB_REPOSITORY" -p models.tgz -D /tmp 2>/dev/null; then
+            tar xzf /tmp/models.tgz && echo "Model from the embedding-model release."
+          else
+            mkdir -p $M/onnx
+            auth=(); [ -n "$HF_TOKEN" ] && auth=(-H "Authorization: Bearer $HF_TOKEN")
+            for f in config.json tokenizer.json tokenizer_config.json onnx/model.onnx; do
+              curl -fsSL "${auth[@]}" -o "$M/$f" "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/$f"
+            done
+            for f in special_tokens_map.json vocab.txt; do
+              curl -fsSL "${auth[@]}" -o "$M/$f" "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/$f" || rm -f "$M/$f"
+            done
+            echo "Model from Hugging Face."
+          fi
+          ls -la $M $M/onnx
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Deploy
         env:
