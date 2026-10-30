@@ -31,6 +31,16 @@ import db from "./store.js";
 
 const VOICE_MODEL = process.env.VOICE_MODEL ?? "claude-sonnet-5";
 
+// What one reply actually did, for answer reviews (src/server/plures-turns.ts): where the
+// router sent it, whether the model rerouted it, how it retrieved and what it used.
+export interface TurnTrace {
+  intent?: string;
+  rerouted_to?: string;
+  retrieval?: string;
+  sources?: { title: string; snippet: string; score?: number }[];
+  refused?: boolean;
+}
+
 export interface VoiceTurn {
   role: "user" | "assistant";
   text: string;
@@ -898,9 +908,11 @@ export async function streamVoiceReply(
   onDelta: (t: string) => void | Promise<void>,
   history: VoiceTurn[] = [],
   forced?: Intent, // set on a model-requested reroute; never recurses twice
-  searchOverride?: string // set on a model-requested re-search; never recurses twice
+  searchOverride?: string, // set on a model-requested re-search; never recurses twice
+  trace: TurnTrace = {} // filled in as the reply runs; see TurnTrace
 ): Promise<void> {
   const intent = forced ?? routeIntent(tenantId, question, history);
+  trace.intent ??= intent;
   if (intent !== "chat") setLastIntent(tenantId, intent);
   // Narrate the routing decision to the live activity feed — unless this is a
   // reroute/re-search re-run, which announces itself where it's requested.
@@ -1199,6 +1211,8 @@ export async function streamVoiceReply(
     const qLine = query.split("\n")[0];
     publishUiEvent(tenantId, { kind: "search", state: "run", label: `Searching documents: ${qLine.slice(0, 50)}${qLine.length > 50 ? "…" : ""}` });
     const hits = await search(tenantId, query, 40, getEmbedder(), "hybrid").catch(() => []);
+    trace.retrieval = searchOverride ? "hybrid, re-searched" : "hybrid";
+    trace.sources = hits.slice(0, 8).map((h) => ({ title: (h.document_path.split("/").pop() ?? h.document_path) + (h.heading ? ` › ${h.heading}` : ""), snippet: h.text.slice(0, 300) }));
     const docNames = [...new Set(hits.map((h) => h.document_path.split("/").pop() ?? ""))].slice(0, 2).join(", ");
     publishUiEvent(tenantId, { kind: "sources", state: hits.length ? "ok" : "fail", n: hits.length, label: hits.length ? `${hits.length} passages · ${docNames}` : "No passages found" });
     const block = hits
@@ -1493,13 +1507,14 @@ export async function streamVoiceReply(
   // Model-requested reroute: the deterministic router picked the wrong domain
   // and the model could tell from the data. Re-run once with the right one.
   if (reroute && !emitted) {
-    await streamVoiceReply(tenantId, question, onDelta, history, reroute);
+    trace.rerouted_to = reroute;
+    await streamVoiceReply(tenantId, question, onDelta, history, reroute, undefined, trace);
     return;
   }
   // Model-requested re-search: right domain, wrong retrieval. Retry once with
   // the model's own query — it knows the conversation and what it needs.
   if (research && !emitted) {
-    await streamVoiceReply(tenantId, question, onDelta, history, intent, research);
+    await streamVoiceReply(tenantId, question, onDelta, history, intent, research, trace);
     return;
   }
   // LIVENESS INVARIANT, enforced at the source: no voice turn may end silent,
@@ -1507,6 +1522,7 @@ export async function streamVoiceReply(
   // endpoint didn't, and a sourceless docs turn once returned "" after the
   // model answered with nothing but tags twice.
   if (!emitted && !acted) {
+    trace.refused = true;
     await emit("I came up empty on that one, sorry. Try asking it another way.");
   }
   await flushNumbers();

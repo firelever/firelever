@@ -26,6 +26,8 @@ import { calendarConfigured, listEvents } from "../calendar/google.js";
 import { buildGreeting } from "./greeting.js";
 import { pipelineBoard } from "../leadgen/store.js";
 import { logTurn } from "./chatlog.js";
+import { reportTurn, sessionOf } from "./plures-turns.js";
+import type { TurnTrace } from "../rag/answer-voice.js";
 import { watchdogNote, watchdogHealth, registerRemedy } from "./watchdog.js";
 import { clearVoiceCaches } from "../rag/answer-voice.js";
 import { proposeRedlines } from "../rag/redlines.js";
@@ -443,14 +445,16 @@ app.post("/api/voice/text", limited("ask"), async (c) => {
   const q = (text ?? "").trim();
   if (!q) return c.json({ answer: "", audio: null });
   let answer = "";
+  const trace: TurnTrace = {};
   try {
     await streamVoiceReply(tenant.id, q, (t) => {
       answer += t;
-    });
+    }, [], undefined, undefined, trace);
   } catch {
     answer = "Sorry, I hit a problem pulling that up.";
   }
   answer = answer.trim();
+  reportTurn(tenant.id, q, answer, trace, { channel: speak === false ? "text" : "voice", session: sessionOf(tenant.id) });
   let audio: string | null = null;
   if (speak === false) return c.json({ answer, audio: null });
   try {
@@ -558,15 +562,17 @@ const chatCompletions = async (c: any) => {
     let text = greeting;
     if (question) {
       text = "";
+      const trace: TurnTrace = {};
       try {
         await streamVoiceReply(tenantId, question, (t) => {
           text += t;
-        }, history);
+        }, history, undefined, undefined, trace);
       } catch {
         text = "Sorry, I hit a problem pulling that up. Try again.";
       }
       if (!text.trim()) text = "Sorry, I lost my train of thought there. Could you ask me that again?";
       logTurn(tenantId, question, text);
+      reportTurn(tenantId, question, text, trace, { channel: "voice", session: sessionOf(tenantId, history.find((h) => h.role === "user")?.text ?? question) });
     }
     return c.json({
       id,
@@ -592,6 +598,7 @@ const chatCompletions = async (c: any) => {
     // "Brain returned no response" and fails the whole conversation.
     let spoke = false;
     let full = ""; // durable history: the reply as actually spoken
+    const trace: TurnTrace = {};
     try {
       if (!question) {
         await s.write(frame({ content: greeting }));
@@ -601,7 +608,7 @@ const chatCompletions = async (c: any) => {
           if (t) spoke = true;
           full += t;
           await s.write(frame({ content: t }));
-        }, history);
+        }, history, undefined, undefined, trace);
       }
     } catch (e) {
       console.error("[convai] stream failed:", e instanceof Error ? e.message : e);
@@ -610,6 +617,7 @@ const chatCompletions = async (c: any) => {
       spoke = true;
     }
     if (question && full.trim()) logTurn(tenantId, question, full);
+    if (question) reportTurn(tenantId, question, full, trace, { channel: "voice", session: sessionOf(tenantId, history.find((h) => h.role === "user")?.text ?? question) });
     if (!spoke) {
       watchdogNote("empty_turn", question.slice(0, 80));
       await s.write(frame({ content: "Sorry, I lost my train of thought there. Could you ask me that again?" }));
