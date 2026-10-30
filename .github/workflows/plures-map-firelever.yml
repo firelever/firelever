@@ -1,4 +1,5 @@
 # Maps this repo's agent for Plures: https://plures.si/docs#map-github
+# plures-workflow: 2
 # Claude Code reads the code on this runner. Only the map is sent to Plures, with a key
 # that can do nothing but upload this app's map (and start a map run for it).
 # Plures maps it for you: the first map is free, then each costs what the run uses plus 30%,
@@ -20,6 +21,8 @@ on:
       - "**/*.test.*"
       - "**/*.spec.*"
   workflow_dispatch:
+  repository_dispatch: # Map now, from the Plures dashboard
+    types: [plures-map-firelever]
 
 concurrency:
   group: plures-map-firelever
