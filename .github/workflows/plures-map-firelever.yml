@@ -1,13 +1,13 @@
 # Maps this repo's agent for Plures: https://plures.si/docs#map-github
-# plures-workflow: 3
+# plures-workflow: 4
 # A language model reads the code on this runner. Only the map is sent to Plures, with a key
 # that can only upload this app's map, report progress, start a map run and report a check's
 # pull request for it.
-# Plures maps it for you: the first map is free, then each costs what the run uses plus 30%,
-# at most $5, from your Plures credit. Claude by Anthropic reads the code for the Plures
-# oversight engine, which decides where people check. Your code passes
-# through for the run and isn't kept. To map free with your own Anthropic key, add an
-# ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN secret.
+# The first map is free. After that each map costs the Plures engine fee for its steps, plus
+# Claude's usage at cost (at most $5) when Plures runs Claude, from your Plures credit. Claude by
+# Anthropic reads the code for the Plures oversight engine, which decides where people check.
+# Your code passes through for the run and isn't kept. To run Claude on your own Anthropic key
+# instead, add an ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN secret.
 name: Plures map (firelever)
 
 on:
@@ -23,11 +23,11 @@ on:
       - "**/*.test.*"
       - "**/*.spec.*"
   workflow_dispatch:
-  repository_dispatch: # from the Plures dashboard: Map it now, and Add to my code
-    types: [plures-map-firelever, plures-check-firelever]
+  repository_dispatch: # from the Plures dashboard: Map it now, Add to my code, and Fix the drift
+    types: [plures-map-firelever, plures-check-firelever, plures-drift-firelever]
 
 concurrency:
-  group: plures-map-firelever-${{ github.ref_name }}-${{ github.event.action || 'push' }}-${{ github.event.client_payload.check || '' }}
+  group: plures-map-firelever-${{ github.ref_name }}-${{ github.event.action || 'push' }}-${{ github.event.client_payload.check || github.event.client_payload.case || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   map:
-    if: github.event.action != 'plures-check-firelever'
+    if: github.event.action != 'plures-check-firelever' && github.event.action != 'plures-drift-firelever'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -84,3 +84,33 @@ jobs:
           git config user.name "plures-map[bot]"
           git config user.email "plures-map[bot]@users.noreply.github.com"
           npx -y plures@^1.16.0 check add "$PLURES_CHECK" --app firelever
+
+  # Fix the drift: Claude Code reads the code with the graded examples that got worse, finds the
+  # cause, and opens a pull request with the fix and new eval cases. Plures then checks that
+  # quality comes back.
+  drift-fix:
+    if: github.event.action == 'plures-drift-firelever'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Find the cause and open a fix
+        env:
+          PLURES_API_KEY: ${{ secrets.PLURES_MAP_KEY_FIRELEVER_7 }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          PLURES_CASE: ${{ github.event.client_payload.case }}
+        run: |
+          if [ -n "$ANTHROPIC_KEY" ]; then export ANTHROPIC_API_KEY="$ANTHROPIC_KEY"; fi
+          if [ -n "$CLAUDE_TOKEN" ]; then export CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_TOKEN"; fi
+          git config user.name "plures-map[bot]"
+          git config user.email "plures-map[bot]@users.noreply.github.com"
+          npx -y plures@^1.18.0 drift fix "$PLURES_CASE" --app firelever
